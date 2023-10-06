@@ -19,6 +19,7 @@ vim.keymap.set("n", "<C-s>", "<cmd>w<cr>", { noremap = true, desc = "Save window
 
 vim.keymap.set("n", "<A-s>", "<C-o>", { noremap = true, desc = "Jump back" })
 vim.keymap.set("n", "<A-d>", "<gd>", { noremap = false, desc = "Jump back" })
+vim.keymap.set("v", "<leader>y", '"+y', { desc = "Yank to clipboard" })
 -- Unmap mappings used by tmux plugin
 -- TODO(vintharas): There's likely a better way to do this.
 -- vim.keymap.del("n", "<C-h>")

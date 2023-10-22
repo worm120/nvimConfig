@@ -10,6 +10,20 @@ vim.keymap.set({ "n", "v" }, "J", "5j", { noremap = true, desc = "Down faster" }
 vim.keymap.set({ "n", "v" }, "<leader>k", "K", { noremap = true, desc = "Keyword" })
 vim.keymap.set({ "n", "v" }, "<leader>j", "J", { noremap = true, desc = "Join lines" })
 
+vim.keymap.set(
+  { "n", "v" },
+  "<A-k>",
+  "10<C-y>",
+  { noremap = true, desc = " 	Move the view port up 10 lines without moving the cursor" }
+)
+
+vim.keymap.set(
+  { "n", "v" },
+  "<A-j>",
+  "10<C-e>",
+  { noremap = true, desc = " 	Move the view port down 10 lines without moving the cursor" }
+)
+
 -- C-P classic
 vim.keymap.set("n", "<C-P>", "<leader>ff")
 

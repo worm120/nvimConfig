@@ -25,15 +25,16 @@ vim.keymap.set(
 )
 
 -- C-P classic
-vim.keymap.set("n", "<C-P>", "<leader>ff")
+-- vim.keymap.set("n", "<C-p>", "<leader>ff")
 
 -- Save file
 vim.keymap.set("n", "<leader>w", "<cmd>w<cr>", { noremap = true, desc = "Save window" })
 vim.keymap.set("n", "<C-s>", "<cmd>w<cr>", { noremap = true, desc = "Save window" })
 
 vim.keymap.set("n", "<A-s>", "<C-o>", { noremap = true, desc = "Jump back" })
-vim.keymap.set("n", "<A-d>", "<gd>", { noremap = false, desc = "Jump back" })
+vim.keymap.set("n", "<A-a>", "<C-i>", { noremap = true, desc = "Jump forward" })
 vim.keymap.set("v", "<leader>y", '"+y', { desc = "Yank to clipboard" })
+
 -- Unmap mappings used by tmux plugin
 -- TODO(vintharas): There's likely a better way to do this.
 -- vim.keymap.del("n", "<C-h>")
@@ -44,3 +45,4 @@ vim.keymap.set("v", "<leader>y", '"+y', { desc = "Yank to clipboard" })
 -- vim.keymap.set("n", "<C-j>", "<cmd>TmuxNavigateDown<cr>")
 -- vim.keymap.set("n", "<C-k>", "<cmd>TmuxNavigateUp<cr>")
 -- vim.keymap.set("n", "<C-l>", "<cmd>TmuxNavigateRight<cr>")
+--

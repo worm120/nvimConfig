@@ -17,6 +17,9 @@ end
 
 vim.keymap.set("i", "jk", "<ESC>", { noremap = true, silent = true, desc = "<ESC>" })
 vim.keymap.set("i", "jj", "<ESC>", { noremap = true, silent = true, desc = "<ESC>" })
+vim.keymap.set("i", "<A-l>", "<ESC>la", { noremap = true, silent = true, desc = "jump to next next charactor" })
+vim.keymap.set("i", "<A-h>", "<ESC>ha", { noremap = true, silent = true, desc = "jump to prev prev charactor" })
+-- vim.keymap.set({ "n", "i" }, "<A-v>", "<C-v>", { noremap = true, silent = true, desc = "jump to next next charactor" })
 
 vim.keymap.set({ "n", "v" }, "K", "5k", { noremap = true, desc = "Up faster" })
 vim.keymap.set({ "n", "v" }, "J", "5j", { noremap = true, desc = "Down faster" })
@@ -43,14 +46,14 @@ vim.keymap.set(
 
 -- Save file
 vim.keymap.set("n", "<leader>w", "<cmd>w<cr>", { noremap = true, desc = "Save window" })
-vim.keymap.set("n", "<C-s>", "<cmd>w<cr>", { noremap = true, desc = "Save window" })
+vim.keymap.set({ "n", "i" }, "<C-s>", "<cmd>w<cr>", { noremap = true, desc = "Save window" })
 
-vim.keymap.set("n", "<A-s>", "<C-o>", { noremap = true, desc = "Jump back" })
-vim.keymap.set("n", "<A-a>", "<C-i>", { noremap = true, desc = "Jump forward" })
+vim.keymap.set({ "n", "i" }, "<A-s>", "<C-o>", { noremap = true, desc = "Jump back" })
+vim.keymap.set({ "n", "i" }, "<A-a>", "<C-i>", { noremap = true, desc = "Jump forward" })
 -- vim.keymap.set("n", "<A-h>", "<C-h>", { noremap = true, desc = "Jump forward" })
 vim.keymap.set("v", "<leader>y", '"+y', { desc = "Yank to clipboard" })
 
-map("n", "<A-b>", "<cmd>e #<cr>", { desc = "Switch to Other Buffer" })
+map({ "n", "i" }, "<A-o>", "<cmd>e #<cr>", { desc = "Switch to Other Buffer" })
 -- Unmap mappings used by tmux plugin
 -- TODO(vintharas): There's likely a better way to do this.
 -- vim.keymap.del("n", "<C-h>")

@@ -44,11 +44,14 @@ return {
     },
     opts = {
         defaults = {
+            layout_strategy = "horizontal",
+            layout_config = { height = 0.95, width = 0.95, preview_width = 0.6 },
             mappings = {
                 i = {
-                    -- ["<A-d>"] = function()
-                    --     return require("telescope.builtin").lsp_definitions({ reuse_win = true })
-                    --   end,
+                    -- ["<A-g>"] = function()
+                    --     -- return require("telescope.builtin").lsp_definitions({ reuse_win = true })
+                    --     return Util.telescope("oldfiles", { cwd = vim.loop.cwd() })
+                    -- end,
                 },
             },
         },

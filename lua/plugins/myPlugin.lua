@@ -26,7 +26,7 @@ return {
                 pyright = {},
                 clangd = {},
                 cmake = {},
-                java = {},
+                java = {cmd="/home/zn/code/java-language-server/dist/lang_server_linux.sh"},
                 jsonls = {},
                 tsserver = {},
                 ltex = {},

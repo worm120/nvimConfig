@@ -19,6 +19,7 @@ vim.keymap.set("i", "jk", "<ESC>", { noremap = true, silent = true, desc = "<ESC
 vim.keymap.set("i", "jj", "<ESC>", { noremap = true, silent = true, desc = "<ESC>" })
 vim.keymap.set("i", "<A-l>", "<ESC>la", { noremap = true, silent = true, desc = "jump to next next charactor" })
 vim.keymap.set("i", "<A-h>", "<ESC>ha", { noremap = true, silent = true, desc = "jump to prev prev charactor" })
+-- vim.keymap.set("i", "<A-q>", "<ESC>q", { noremap = true, silent = true, desc = "exit current window" })
 -- vim.keymap.set({ "n", "i" }, "<A-v>", "<C-v>", { noremap = true, silent = true, desc = "jump to next next charactor" })
 
 vim.keymap.set({ "n", "v" }, "K", "5k", { noremap = true, desc = "Up faster" })

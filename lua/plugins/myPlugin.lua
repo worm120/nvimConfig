@@ -16,26 +16,26 @@ return {
     },
 
     -- add pyright to lspconfig
-    {
-        "neovim/nvim-lspconfig",
-        ---@class PluginLspOpts
-        opts = {
-            ---@type lspconfig.options
-            servers = {
-                -- pyright will be autcmatically installed with mason and loaded with lspconfig
-                pyright = {},
-                clangd = {},
-                cmake = {},
-                java = {cmd="/home/zn/code/java-language-server/dist/lang_server_linux.sh"},
-                jsonls = {},
-                tsserver = {},
-                ltex = {},
-                marksman = {},
-                rust_analyzer = {},
-                yamlls = {},
-            },
-        },
-    },
+    -- {
+    --     "neovim/nvim-lspconfig",
+    --     ---@class PluginLspOpts
+    --     opts = {
+    --         ---@type lspconfig.options
+    --         servers = {
+    --             -- pyright will be autcmatically installed with mason and loaded with lspconfig
+    --             pyright = {},
+    --             clangd = {},
+    --             cmake = {},
+    --             -- java = {cmd="/home/zn/code/java-language-server/dist/lang_server_linux.sh"},
+    --             jsonls = {},
+    --             tsserver = {},
+    --             ltex = {},
+    --             marksman = {},
+    --             rust_analyzer = {},
+    --             yamlls = {},
+    --         },
+    --     },
+    -- },
     { import = "lazyvim.plugins.extras.lang.python" },
     { import = "lazyvim.plugins.extras.lang.clangd" },
     { import = "lazyvim.plugins.extras.lang.cmake" },

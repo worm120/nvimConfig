@@ -485,3 +485,12 @@ if vim.fn.has('nvim-0.11') == 0 then
 end
 
 -- vim: set foldmethod=marker ts=2 sw=2 tw=80 noet :
+
+map('i', 'jj', '<Esc>',{desc = "exit input mode"})
+map('i', 'jk', '<Esc>q',{desc = "exit input mode and quit"})
+map('n', '<A-s>', '<C-o>', {desc='go back'})
+map('n', '<A-i>', '<C-i>', {desc='go forward'})
+map('n', '<A-d>', '<cmd>Telescope lsp_definitions<CR>', {desc = 'go to definition'})
+map('n', '<A-r>', '<cmd>Telescope lsp_references<CR>', {desc = 'go to reference'})
+map('n', '<MouseMove>', require('hover').hover_mouse, {desc = 'hover.nvim'})
+vim.o.mousemoveevent = true

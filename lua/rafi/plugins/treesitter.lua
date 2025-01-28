@@ -139,6 +139,7 @@ return {
 			ensure_installed = {
 				'bash',
 				'c',
+				'cpp',
 				'comment',
 				'css',
 				'csv',
@@ -153,8 +154,8 @@ return {
 				'gitcommit',
 				'gitignore',
 				'graphql',
-				'html',
 				'http',
+				'html',
 				'javascript',
 				'jsdoc',
 				'json5',

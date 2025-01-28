@@ -93,7 +93,7 @@ opt.wildmode = 'longest:full,full'
 opt.diffopt:append({ 'indent-heuristic', 'algorithm:patience' })
 
 opt.textwidth = 80             -- Text width maximum chars before wrapping
-opt.tabstop = 2                -- The number of spaces a tab is
+opt.tabstop = 4                -- The number of spaces a tab is
 opt.smartindent = true         -- Smart autoindenting on new lines
 opt.shiftwidth = 2             -- Number of spaces to use in auto(indent)
 opt.shiftround = true          -- Round indent to multiple of 'shiftwidth'
@@ -255,3 +255,6 @@ vim.filetype.add({
 })
 
 -- vim: set ts=2 sw=0 tw=80 noet :
+vim.opt.fileencodings = "utf-8,gb2312,gbk,gb18030"
+vim.opt.encoding = "utf-8"
+vim.opt.relativenumber = true

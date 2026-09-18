@@ -2,7 +2,8 @@
 
 给后续 AI agent / 自己看的现状快照。最后更新：2026-09-18，
 本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」
-+「去掉 `nvim .` 启动时残留的占位 buffer（[No Name] 与目录名那两格）」。
++「去掉 `nvim .` 启动时残留的占位 buffer（[No Name] 与目录名那两格）」
++「装 nvim-treesitter-context（函数头固定在窗口顶部 = VSCode 的 sticky scroll）」。
 提交主题与 hash 一律现查（`git log -1 --format=%s` / `%h`），不要抄进文档。
 **不要把提交 hash 写进本文件**：amend 会改 hash，一写就自相矛盾（要 hash 用 `git log -1 --format=%h` 查）。
 
@@ -10,11 +11,14 @@
 
 - neovim 0.12.5，runtime 在 `/home/zn/nvim-linux-x86_64/share/nvim/runtime`
   （不是发行版包，**不要**读 `/usr/share/nvim`）
-- 配置 = LazyVim（folke 原版，非自制 fork）+ lazy.nvim；41 个插件（含本批新装的 6 个配色主题）
+- 配置 = LazyVim（folke 原版，非自制 fork）+ lazy.nvim；42 个插件（含本批新装的 6 个配色主题
+  + nvim-treesitter-context）
   - 插件目录 `~/.local/share/nvim/lazy/`，mason 在 `~/.local/share/nvim/mason/`
   - LazyVim 默认 spec 在 `~/.local/share/nvim/lazy/LazyVim/lua/lazyvim/plugins/*.lua`
-- `lazyvim.json` 里 `extras` 列表是**空**的；实际额外启用的 extras 是在
-  `lua/config/lazy.lua` 里直接 `import = "lazyvim.plugins.extras.lang.python"`
+- extras 写在两处：`lazyvim.json` 的 `extras` 数组（= `lazyvim.plugins.extras.ui.treesitter-context`）
+  由 `LazyVim/lua/lazyvim/plugins/xtras.lua:32-46` 自动转成 `{ import = … }`，`:LazyExtras` 里能看到已启用；
+  python / rust extra 则是在 `lua/config/lazy.lua` 里直接 `import = "lazyvim.plugins.extras.lang.python"`
+  —— 那种写法在 `:LazyExtras` 界面里显示不出启用状态
 - `noice.nvim` 没有任何自定义覆盖 → 行为即 LazyVim 默认
 - 这份配置的 git 仓库 origin 仍是 `https://github.com/LazyVim/starter`（上游 starter，不是自有远端）：
   只做本地提交，不要 push
@@ -234,8 +238,29 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   `require("snacks.dashboard").status`（opened / reason）与每个 buffer 的
   `buflisted` / `buftype` / `win_findbuf` —— "为什么这个 buffer 在/不在 bufferline" 基本就看这三样
 
+## 功能 7：函数头固定在窗口顶部（sticky scroll，2026-09-18 装）
+
+- 起因：用户问「能不能让第一行始终保持在函数名那一行（VSCode 默认行为）」。nvim **本体没有**这个功能
+  （0.12.5：`grep -ri sticky $VIMRUNTIME/doc` 无命中；syntax 文件里的 sticky 是关键词，无关）
+- 用插件 `nvim-treesitter/nvim-treesitter-context`，LazyVim 自带 extra
+  `lazyvim.plugins.extras.ui.treesitter-context`（默认不启用），spec 见
+  `LazyVim/lua/lazyvim/plugins/extras/ui/treesitter-context.lua`
+- 启用：把 extra 名写进 `lazyvim.json` 的 `extras` 数组（不要改 lazy.lua）→ `:LazyExtras` 也显示为启用
+- LazyVim 给的默认 `opts = { mode = "cursor", max_lines = 3 }`，切换键 `<leader>ut`
+  （`Snacks.toggle`，实测 `maparg("<leader>ut","n",0,1).desc` = "Toggle Treesitter Context"）；
+  插件自身默认 `max_lines = 0`（不限行），要求 nvim ≥ 0.9 + 该语言的 parser
+- 实测（tmux 真 TTY，`/tmp/tsc_test.cpp`，光标 line 45，窗口 30 行）：屏幕顶部依次是
+  `2 namespace demo {` / `4 class Widget {` / `6 int LongMethod(int seed) {`，其下才是真正的 line 24 起的函数体
+  → 三层祖先各占一行；`require("treesitter-context.config")` 读回 `mode=cursor max_lines=3`
+- 只想要一行函数签名（丢掉外层 namespace/class）：spec 的 `opts` 改 `max_lines = 1`
+  （`trim_scope` 默认 `outer`，超行数先丢最外层 = 留下的正是最内层函数签名）
+- 只影响显示：`enabled=true` 时由插件维护一个浮窗，`<leader>ut` 可随时关掉；收尾照例
+  `persistence.stop()` → `:qa!`（sessions sha1 前后一致）
+
 ## 编辑器行为备忘
 
+- 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件
+  nvim-treesitter-context，**不是** nvim 本体功能（见"功能 7"）；`<leader>ut` 可随时开关
 - `shift+K` 的 LSP hover 是 noice 浮窗（view hover，`enter = false` 不可聚焦）：
   滚动靠鼠标滚轮，键盘用 LazyVim 内置 `<C-f>` / `<C-b>`（→ `noice.lsp.scroll(±4)`）；
   光标一移动（`CursorMoved`）窗口就 autohide 关闭，所以 `j`/`k` 没用
@@ -332,5 +357,5 @@ end, 9500)'
 - 项目根那条旧的分支键 session 已按用户确认复制成目录键（旧文件保留），根目录现在能自动恢复；
   其它目录若还有 `…%%<branch>.vim` 旧文件，同样处理（见"功能 1 / 历史遗留"）
 - 本仓未设置自有远端，未 push
-- `lazyvim.json` 的 `extras` 为空但 `lazy.lua` 直接 import 了 python extra：
-  `:LazyExtras` 界面里不会显示它是启用状态（仅影响 UI 显示，不影响实际生效）
+- `lazy.lua` 里直接 import 的 python / rust extra 在 `:LazyExtras` 界面里不会显示为启用
+  （仅影响 UI 显示，不影响实际生效）；写进 `lazyvim.json` extras 的 treesitter-context 显示正常

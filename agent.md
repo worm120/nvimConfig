@@ -1,7 +1,8 @@
 # nvim 配置现状（agent.md）
 
 给后续 AI agent / 自己看的现状快照。最后更新：2026-09-18，
-与本文件同批的提交是 `feat(nvim): nvim . 也自动恢复 session，行号改为绝对行号`。
+本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」。
+提交主题与 hash 一律现查（`git log -1 --format=%s` / `%h`），不要抄进文档。
 **不要把提交 hash 写进本文件**：amend 会改 hash，一写就自相矛盾（要 hash 用 `git log -1 --format=%h` 查）。
 
 ## 环境
@@ -22,7 +23,7 @@
 ```
 init.lua
 lua/config/{options,keymaps,autocmds,lazy}.lua
-lua/plugins/{lsp,persistence,snacks,example}.lua
+lua/plugins/{lsp,persistence,snacks,example,treesitter}.lua
 lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用，见下
 ```
 
@@ -32,12 +33,15 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   - `<A-d>` 定义、`<A-r>` 引用、`<A-s>` 跳回（`<C-o>`）
   - `<A-]>` / `<A-[>` 下/上一个 buffer，`<A-a>` 上一次 buffer（`b#`）
   - `<A-j>` / `<A-k>` 不移动光标滚屏（`<C-E>` / `<C-Y>`）
-- `lua/config/lazy.lua`：import python extra；禁用 rtp 插件 gzip / tarPlugin / tohtml / tutor / zipPlugin
+- `lua/config/lazy.lua`：import python extra、**rust extra**；
+  禁用 rtp 插件 gzip / tarPlugin / tohtml / tutor / zipPlugin
 - `lua/config/autocmds.lua`：空模板，**没有**自定义 autocmd（session 恢复的 autocmd 在 plugins/persistence.lua 里）
 - `lua/plugins/snacks.lua`：explorer 显示 gitignored + 隐藏文件，固定宽度 40
 - `lua/plugins/lsp.lua`：opts 用 `function(_, opts)` 形式（为了保留其它 server 的设置不被覆盖）
   - pyright → `~/venvs/conan-env/bin/python`
   - lua_ls → 喂 xmake 的 API 名单和定义库（见"功能 2"）
+- `lua/plugins/treesitter.lua`：把手工装过的语言补进 nvim-treesitter 的 `ensure_installed`
+  （LazyVim 的 spec 带 `opts_extend = { "ensure_installed" }`，是追加不是覆盖）—— 见"功能 3"
 
 ## 功能 1：打开项目自动恢复上次 session
 
@@ -62,6 +66,16 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
 - 退出时保存（`need = 1`：至少一个"有名字且非常规 buftype"的 buffer，否则不落盘）
 - 手动键不变（`<leader>` = 空格）：`<leader>qs` 恢复当前目录、`<leader>qS` 选择 session、
   `<leader>ql` 上次、`<leader>qd` 本次退出不保存
+- **恢复后补 filetype**（2026-09-18 加，修"`nvim .` 恢复出来的文件没高亮、clangd 也不启动"）：
+  session 恢复出来的 buffer 是 bufload 来的，**不触发 BufRead** → filetype 检测没跑
+  （`vim.bo.filetype` / `syntax` / `b:did_filetype_lua` 全空）→ treesitter 不挂、LSP 也不启动。
+  `require("persistence").load()` 之后跑 `fix_session_buffers()`：先对第一个"真实文件"buffer
+  触发一次 `BufReadPre`（lazy.nvim 靠这个事件懒加载 nvim-lspconfig，不先加载则后面 filetype
+  设好了也轮不到 LSP），再给所有"已加载 + filetype 空 + 名字非空且不是目录"的 buffer 用
+  `vim.filetype.match({ buf = …, filename = … })` 补 filetype（设置 'filetype' 会触发 FileType）
+  实测（tmux 真 TTY，`nvim .` in modules/drivers/src）：恢复后 `ft=cpp`、`clients={clangd}`、
+  `hl_active=true`；补丁前是 `ft=""`、`clients=0`、`hl_active=false`
+  只在走了"自动恢复"那条路径时执行（守卫的 return 在它之前），`nvim <file>` 不受影响
 - 为什么用 autocmd 而不是插件自带开关：persistence.nvim 这个 commit **没有** autoload 选项
   （README 明说"永不自动恢复，但你可以自己写 autocmd"）；LazyVim 只把它挂在 `BufReadPre`，
   无参数启动时那次 `require("persistence")` 靠 lazy.nvim 的 module loader
@@ -113,6 +127,45 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
 - 覆盖 LazyVim 的 server 设置要用 `opts = function(_, opts)` 并把原有设置（如 pyright）写进函数体，
   否则 table 合并语义可能把原有设置换掉
 
+## 功能 3：nvim-treesitter 的语言不掉队（ensure_installed）
+
+- 症状：更新 LazyVim/插件后，某个语言（这次是 cpp）的文件**完全没有语法高亮**，
+  而同会话里 clangd 照常工作（inlay hints、诊断都在）→ 极易误判成"clangd 不工作"
+- 机制：nvim-treesitter main 新版把 parser 编译到 `~/.local/share/nvim/site/parser/*.so`，
+  queries 用 `site/queries/<lang>` 软链指向插件的 `runtime/queries/<lang>`（插件根目录的
+  `queries/` 已不存在，`runtime/` 不在 rtp 上）；插件更新时只重建 `ensure_installed` 里的
+  语言，手工 `:TSInstall` 过的语言会掉队 —— 旧 `.so` 留在插件老目录（`get_parser` 仍返回 OK），
+  但 highlights query 找不到，高亮静默失效
+- 诊断（nvim 内）：`vim.api.nvim_get_runtime_file("queries/cpp/highlights.scm", true)` 为空；
+  `nvim_get_runtime_file("parser/cpp.so", true)` 只命中 `lazy/nvim-treesitter/parser/cpp.so`
+- 修：`:TSInstall <lang>`（从 github 拉源码本地编译 → **国内必须走代理**：让 nvim 带
+  `HTTPS_PROXY=http://127.0.0.1:7890` 启动，否则 curl 卡在 0 字节）。产物三件套：
+  `site/parser/<lang>.so`、`site/parser-info/<lang>.revision`、`site/queries/<lang>`
+- 持久化：写进 `lua/plugins/treesitter.lua` 的 `opts.ensure_installed`。
+  验证：`LazyVim.opts("nvim-treesitter").ensure_installed` = 49 个（默认 25 + 本次补的 24）
+- 2026-09-18 补齐：comment cpp css csv cue editorconfig fish gitattributes gitcommit git_config
+  gitignore git_rebase graphql haskell http json5 just make readline scss sql ssh_config svelte zig
+  （`jsonc` 已并入 `json`、nvim-treesitter 里没有它的 parser 定义，别写进列表）
+- 插件老目录 `lazy/nvim-treesitter/parser/*.so` 暂时**别删**：掉队语言当时只有那份可用
+
+## 功能 4：Rust 支持（2026-09-18 配）
+
+- 三块拼起来：treesitter `rust` + `ron`、系统的 rust-analyzer、LazyVim 的
+  `lazyvim.plugins.extras.lang.rust`（在 `lua/config/lazy.lua` 里 import，和 python extra 一样）
+- rust-analyzer 来自 rustup：`rustup component add rust-analyzer`（本机 1.97.1）。
+  **坑**：`~/.cargo/bin/rust-analyzer` 是 rustup 的 shim，组件没装时文件存在、`executable()`
+  也返回 1，但一执行就报 `Unknown binary 'rust-analyzer' in official toolchain` —— 判断是否
+  可用要真的跑一次 `rust-analyzer --version`。国内装组件走镜像：
+  `RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static rustup component add rust-analyzer`
+- extra 带来：crates.nvim（Cargo.toml 补全/hover）、rustaceanvim（LSP 集成、`<leader>cR`、
+  `<leader>dr`）、mason 里的 codelldb（DAP 调试）；treesitter 的 rust/ron 由 extra 的
+  `ensure_installed` 管，**不用**再写进 `lua/plugins/treesitter.lua`
+- 实测（tmux 真 TTY，`~/tmp-disk1/Document/program/nil/crates/ssr/src/tests.rs`）：
+  `FT=rust`、`HL_ACTIVE=true`、`QUERY=true`、`CLIENT=rust-analyzer`，屏幕上能看到它的 inlay hints
+- **坑**：同一个会话里先打开 .rs、之后才 `:TSInstall rust` → LazyVim 在 FileType 那一刻判定
+  "parser 不存在"就不启动高亮器，装完不会重试（重开文件/会话才生效；老会话里手动
+  `vim.treesitter.start(0)` 也能救）。本次就踩了这个：老会话 `HL_ACTIVE=false`、新会话 `true`
+
 ## 编辑器行为备忘
 
 - `shift+K` 的 LSP hover 是 noice 浮窗（view hover，`enter = false` 不可聚焦）：
@@ -127,6 +180,10 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
     行号会整个消失（`snacks/toggle.lua:186-203`）
 - 回答"某个键是什么"这类问题：去 `~/.local/share/nvim/lazy/LazyVim/lua/lazyvim/plugins/*.lua`
   和插件源码里读，不要凭记忆或上游网页
+- "文件没高亮 / clangd 不工作"的诊断顺序：先 `vim.bo.filetype`（空 → filetype 检测没跑，
+  见"功能 1"的 `fix_session_buffers`，或手动 `:e` 一次），再看
+  `vim.treesitter.query.get(lang, "highlights")`（空 → treesitter 掉队，见"功能 3"），
+  最后才看 `vim.lsp.get_clients()`。clangd 由 FileType 驱动，filetype 空时它也不会启动
 
 ## 无头验证配方（改配置前后都用它，别靠肉眼）
 
@@ -158,6 +215,10 @@ end, 9500)'
   cp -r ~/.local/state/nvim/sessions ~/.local/state/nvim-<copy>/  # sessions 目录也按 APPNAME 分开
   NVIM_APPNAME=nvim-<copy> nvim …            # 用完把四处目录都删掉
   ```
+- **读用户正在跑的那个 nvim**（最快的现场取证）：GUI/终端 nvim 都有 server socket
+  （`ls /run/user/1000/nvim.<pid>.0`），只读查询用
+  `nvim --server <sock> --remote-expr 'luaeval("vim.inspect(...)")'`：luaeval 里嵌套引号用
+  `[[...]]`，多语句用 `pcall(dofile, [[/tmp/x.lua]])`（脚本把结果写文件再读，`io.write` 不进消息区）
 - 复现"真交互"问题要**真 TTY**：`nvim --headless` 没有 UI（UIEnter 不发、dashboard/explorer 不出现），
   结论会失真。**首选 tmux**（本机已装 3.4）：能真按键 + 直接读屏幕文字（`script` 只能存转义字节流）：
   ```bash
@@ -183,9 +244,10 @@ end, 9500)'
 
 ## Git 与提交
 
-- 最新本地提交：`feat(nvim): nvim . 也自动恢复 session，行号改为绝对行号`（含本文件）；
-  hash 用 `git log -1 --format=%h` 现查，不要抄进文档；改动行数同理不要写，amend 会让它立刻过时
-- `main` 领先 `origin/main` 2 个提交（origin = LazyVim/starter 上游，未 push）
+- 最近提交用 `git log -1 --format=%s` 现查，hash 用 `%h`；**别把 hash / 改动行数抄进文档**
+  （amend 会让它们立刻过时）。本文件应与配置改动同批提交
+- 领先 `origin/main` 若干本地提交（origin = LazyVim/starter 上游，**不 push**）；
+  具体数量用 `git rev-list --count origin/main..HEAD` 现查，别写死在文档里
 - 全局 `~/.gitconfig` 有 `commit.template=commit_template`，那是**工作仓**（BYD ADAS）的模板，
   本仓没有该文件 → 本仓按 Conventional Commits 写（参考本仓历史 `docs:` / `fix:` 风格）
 - 提交信息必须用 `git commit -F <file>`（或 heredoc），**不要** `-m`：

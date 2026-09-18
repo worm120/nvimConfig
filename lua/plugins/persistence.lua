@@ -43,6 +43,38 @@ return {
           -- require 会触发 lazy.nvim 按需加载 persistence 并执行上面的 opts
           -- 该目录没有 session 文件时 load() 什么也不做
           require("persistence").load()
+
+          -- session 恢复出来的 buffer 是 bufload 出来的，不触发 BufRead →
+          -- filetype 检测没跑：文件没有语法高亮，clangd 之类的 LSP 也不会启动
+          -- （在那个 buffer 里手动 :e 重载一次就恢复正常）。这里把这两件事补上。
+          local function fix_session_buffers()
+            local bufs = vim.api.nvim_list_bufs()
+            local function is_real_file(b)
+              local name = vim.api.nvim_buf_get_name(b)
+              return vim.api.nvim_buf_is_loaded(b)
+                and vim.bo[b].buftype == ""
+                and name ~= ""
+                and vim.fn.isdirectory(name) ~= 1
+            end
+            -- 先触发一次 BufReadPre：lazy.nvim 靠这个事件懒加载 nvim-lspconfig，
+            -- 不先加载的话，下面 filetype 设好了也轮不到 LSP 启动
+            for _, b in ipairs(bufs) do
+              if is_real_file(b) then
+                vim.api.nvim_exec_autocmds("BufReadPre", { buffer = b, modeline = false })
+                break
+              end
+            end
+            for _, b in ipairs(bufs) do
+              if is_real_file(b) and vim.bo[b].filetype == "" then
+                local ft = vim.filetype.match({ buf = b, filename = vim.api.nvim_buf_get_name(b) })
+                if ft then
+                  -- 设置 'filetype' 会触发 FileType autocmd → treesitter / ftplugin / LSP 都跟上
+                  vim.bo[b].filetype = ft
+                end
+              end
+            end
+          end
+          fix_session_buffers()
         end,
       })
     end,

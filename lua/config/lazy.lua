@@ -20,6 +20,8 @@ require("lazy").setup({
     { "LazyVim/LazyVim", import = "lazyvim.plugins" },
     -- import LazyVim extras
     { import = "lazyvim.plugins.extras.lang.python" },
+    -- rust：crates.nvim + rustaceanvim（用 PATH 里的 rust-analyzer）+ treesitter rust/ron
+    { import = "lazyvim.plugins.extras.lang.rust" },
     -- import/override with your plugins
     { import = "plugins" },
   },

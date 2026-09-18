@@ -6,8 +6,6 @@ return {
 
       -- pyright 用 conan 环境的 python
       opts.servers.pyright = {
-        -- pyright 来自 nix（home.packages），别让 mason 再装一份
-        mason = false,
         settings = {
           python = {
             pythonPath = "~/venvs/conan-env/bin/python",
@@ -19,8 +17,6 @@ return {
       -- 不喂给 lua_ls 就会刷一片 undefined-global / undefined-field。
       -- 名单与定义文件由 lua/xmake-ls/gen.py 从 `xmake show -l apis` 生成。
       opts.servers.lua_ls = vim.tbl_deep_extend("force", opts.servers.lua_ls or {}, {
-        -- lua-language-server 来自 nix（home.packages），别让 mason 再装一份
-        mason = false,
         settings = {
           Lua = {
             diagnostics = { globals = require("xmake-ls.globals") },

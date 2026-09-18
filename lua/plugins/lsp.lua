@@ -4,12 +4,21 @@ return {
     opts = function(_, opts)
       opts.servers = opts.servers or {}
 
-      -- pyright 用 conan 环境的 python
+      -- pyright 用的 python：conan 环境只在部分机器上存在，所以先判断再设置。
+      -- 不判断的话，pyright 会一直拿着一个不存在的解释器（这台机器上就是如此）。
+      -- 优先级：$PYRIGHT_PYTHON > ~/venvs/conan-env/bin/python；都不存在就不设
+      -- pythonPath，交给 pyright 自己找（项目里的 .venv / pyrightconfig.json /
+      -- 系统 python 都会按它的默认逻辑处理）。
+      local venvPython = vim.env.PYRIGHT_PYTHON
+        or vim.fn.expand("~/venvs/conan-env/bin/python")
+      local pyrightPython = {}
+      if vim.fn.executable(venvPython) == 1 then
+        pyrightPython.pythonPath = venvPython
+      end
+
       opts.servers.pyright = {
         settings = {
-          python = {
-            pythonPath = "~/venvs/conan-env/bin/python",
-          },
+          python = pyrightPython,
         },
       }
 

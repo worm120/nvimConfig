@@ -1,7 +1,8 @@
 # nvim 配置现状（agent.md）
 
 给后续 AI agent / 自己看的现状快照。最后更新：2026-09-18，
-本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」。
+本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」
++「去掉 `nvim .` 启动时残留的占位 buffer（[No Name] 与目录名那两格）」。
 提交主题与 hash 一律现查（`git log -1 --format=%s` / `%h`），不要抄进文档。
 **不要把提交 hash 写进本文件**：amend 会改 hash，一写就自相矛盾（要 hash 用 `git log -1 --format=%h` 查）。
 
@@ -35,7 +36,8 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   - `<A-j>` / `<A-k>` 不移动光标滚屏（`<C-E>` / `<C-Y>`）
 - `lua/config/lazy.lua`：import python extra、**rust extra**；
   禁用 rtp 插件 gzip / tarPlugin / tohtml / tutor / zipPlugin
-- `lua/config/autocmds.lua`：空模板，**没有**自定义 autocmd（session 恢复的 autocmd 在 plugins/persistence.lua 里）
+- `lua/config/autocmds.lua`：只有一条自定义 autocmd —— `UIEnter` 后清掉 `nvim .` 残留的占位 buffer
+  （[No Name] 与目录名那格，见"功能 6"）；session 恢复的 autocmd 仍在 plugins/persistence.lua 里
 - `lua/plugins/snacks.lua`：explorer 显示 gitignored + 隐藏文件，固定宽度 40
 - `lua/plugins/lsp.lua`：opts 用 `function(_, opts)` 形式（为了保留其它 server 的设置不被覆盖）
   - pyright → `~/venvs/conan-env/bin/python`
@@ -196,6 +198,41 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   是 lazy 的，靠 `require("tokyonight").load()` 才被拉起来）
 - 装主题/插件走代理（本机 github 直连不通）：
   `HTTPS_PROXY=http://127.0.0.1:7890 nvim --headless -c 'lua require("lazy").install({ wait = true })' -c 'lua pcall(function() require("persistence").stop() end)' -c 'qa!'`
+
+## 功能 6：`nvim .` 启动时 bufferline 前几格的占位 buffer（[No Name] / 目录名）（2026-09-18 修）
+
+- 现象：`nvim .` 打开目录后，bufferline 前几格总被「参数目录」相关的占位 buffer 占掉 ——
+  先是 `[No Name]`，再是目录名（`src/`），然后才是真文件
+- 两类来源（tmux + 启动探针实测；探针把 `vim.api.nvim_create_buf` / `nvim_buf_set_name` / `vim.fn.bufadd`
+  全包了一层打 traceback，所以下面每条的归属都有调用栈证据）：
+  - `[No Name]`：nvim 为参数「目录」建 1 号 buffer；LazyVim 的文件树是 snacks.explorer，其
+    `replace_netrw` 默认 true → 删掉 netrw 的 FileExplorer augroup，自己挂 `BufEnter` 处理目录 buffer
+    （`snacks.nvim/lua/snacks/explorer/init.lua:27-69`）。**启动阶段**（`vim.v.vim_did_enter == 0`）
+    它只把该 buffer 的**名字清空**、不删 buffer：`nvim_buf_set_name(ev.buf, "")`
+    （init.lua:38-40，原注释 "clear bufname so we don't try loading this one again"）→ 名字空了就是
+    [No Name]；**启动之后**（如 `:e .`）才走 `Snacks.bufdelete.delete(ev.buf)`（init.lua:51-54）
+    → 所以只有启动那一次会冒出来
+  - 平时连 [No Name] 都看不见，是因为 snacks dashboard 在 UIEnter 时把 1 号 buffer 收编成自己的
+    scratch（`snacks/dashboard.lua:1183` `M.open({ buf = buf, win = wins[1] })` → buftype=nofile +
+    unlisted）；**有 session 自动恢复时**（VimEnter 已把真文件放进那个窗口）dashboard 直接放弃，实测
+    `Snacks.dashboard.status = { did_setup=true, opened=false, reason="window does not contain the
+    first buffer" }` → 1 号 buffer 原样留着，才在 bufferline 上现身
+  - 目录名那格（`src/`）：**nvim 自己**为参数目录保留的 buffer（C 侧创建，探针里没有任何 Lua 调用
+    捕获到它的创建），session 文件里存着 `%argdel` + `$argadd <目录>`（旧版是 `badd +1 <目录>`），
+    恢复时把它变 `listed=true` → 上 bufferline。**A/B 实测**：同一个干净目录，没有 session 时那个
+    目录 buffer `listed=false`、bufferline 根本不显示；一旦该目录有 session，第一格就是 `src/`
+- 修法（`lua/config/autocmds.lua`，本配置唯一的自定义 autocmd）：`UIEnter`（once）+ `defer_fn(…, 200)`
+  后，若参数是单个目录，删除满足「listed + 未修改 + buftype 空 + **（名字空 或 名字是目录）** + 行数 ≤ 1
+  + 不在任何窗口里」的 buffer；这些条件正好把 dashboard 的 scratch buffer（buftype=nofile）与有名字的
+  真文件排除在外
+- 实测（tmux 真 TTY，`nvim .` in `modules/drivers/src`）：bufferline 只剩
+  `canbus_receiver_p… | canbus_data_colle…`；`ls!` 里 1 号与 2 号 buffer 都已删除（从 3 号开始），
+  参数表仍留着那个目录（`argv` 不变）、文件 buffer 与窗口布局不变；
+  收尾 `persistence.stop()` → `:qa!`，session 文件 sha1 前后一致
+- 想临时手动清（没改配置时）：对着那个 tab 按 `<leader>bd`，或 `:bd1` / `:bd2`（session 在的话下次启动还会回来）
+- 定位这类问题的现成手段：查正在跑的 nvim 时顺手读
+  `require("snacks.dashboard").status`（opened / reason）与每个 buffer 的
+  `buflisted` / `buftype` / `win_findbuf` —— "为什么这个 buffer 在/不在 bufferline" 基本就看这三样
 
 ## 编辑器行为备忘
 

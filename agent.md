@@ -1,7 +1,7 @@
 # nvim 配置现状（agent.md）
 
 给后续 AI agent / 自己看的现状快照。最后更新：2026-09-18，
-本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」。
+本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」。
 提交主题与 hash 一律现查（`git log -1 --format=%s` / `%h`），不要抄进文档。
 **不要把提交 hash 写进本文件**：amend 会改 hash，一写就自相矛盾（要 hash 用 `git log -1 --format=%h` 查）。
 
@@ -9,7 +9,7 @@
 
 - neovim 0.12.5，runtime 在 `/home/zn/nvim-linux-x86_64/share/nvim/runtime`
   （不是发行版包，**不要**读 `/usr/share/nvim`）
-- 配置 = LazyVim（folke 原版，非自制 fork）+ lazy.nvim；33 个插件
+- 配置 = LazyVim（folke 原版，非自制 fork）+ lazy.nvim；41 个插件（含本批新装的 6 个配色主题）
   - 插件目录 `~/.local/share/nvim/lazy/`，mason 在 `~/.local/share/nvim/mason/`
   - LazyVim 默认 spec 在 `~/.local/share/nvim/lazy/LazyVim/lua/lazyvim/plugins/*.lua`
 - `lazyvim.json` 里 `extras` 列表是**空**的；实际额外启用的 extras 是在
@@ -23,7 +23,7 @@
 ```
 init.lua
 lua/config/{options,keymaps,autocmds,lazy}.lua
-lua/plugins/{lsp,persistence,snacks,example,treesitter}.lua
+lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter}.lua
 lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用，见下
 ```
 
@@ -42,6 +42,7 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   - lua_ls → 喂 xmake 的 API 名单和定义库（见"功能 2"）
 - `lua/plugins/treesitter.lua`：把手工装过的语言补进 nvim-treesitter 的 `ensure_installed`
   （LazyVim 的 spec 带 `opts_extend = { "ensure_installed" }`，是追加不是覆盖）—— 见"功能 3"
+- `lua/plugins/colorscheme.lua`：默认配色 everforest（hard 对比度）+ 4 个备选主题 —— 见"功能 5"
 
 ## 功能 1：打开项目自动恢复上次 session
 
@@ -166,6 +167,36 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   "parser 不存在"就不启动高亮器，装完不会重试（重开文件/会话才生效；老会话里手动
   `vim.treesitter.start(0)` 也能救）。本次就踩了这个：老会话 `HL_ACTIVE=false`、新会话 `true`
 
+## 功能 5：配色 / 对比度（2026-09-18 换 everforest）
+
+- 起因：LazyVim 默认 tokyonight（`style = "moon"`）的注释/行号对比度偏低。实测 WCAG 相对亮度比
+  （注释 / 行号 / 隐藏字符 vs 背景，数字由下面的"无头配色探针" dump 后算出）：
+  - tokyonight-moon **3.11 / 1.56 / 2.34**（night 2.76、storm 2.35 → 换 tokyonight 变体只会更糊）
+  - melange 6.65 / 3.39 / 3.39、catppuccin-mocha 5.81 / 1.80 / 3.36、gruvbox(hard) 4.47 / 3.37 / 1.86、
+    **everforest(hard) 4.24 / 1.95 / 1.70**、kanagawa-dragon 4.17、onedark 2.32（比 tokyonight 还差）
+  - vscode.nvim（VS Code 深色复刻，bg `#1f1f1f`）4.95 / 2.39 / 2.39 —— 实测比 everforest 还高，
+    语法色 Function 11.66 / Identifier 11.05 / Number 9.70 也最亮
+- 当前选择：**vscode**（`Mofiqul/vscode.nvim`，bg `#1f1f1f`；真 TTY 实测 `colors_name=vscode`），
+  写在 `lua/plugins/colorscheme.lua`：`{ "LazyVim/LazyVim", opts = { colorscheme = "vscode" } }`
+  —— 覆盖 LazyVim 默认的 `function() require("tokyonight").load() end`
+  （`LazyVim/lua/lazyvim/config/init.lua:11`；传字符串时走 `vim.cmd.colorscheme`，同文件 252）
+- 主题自己的 `g:` 开关写在该主题 spec 的 `init` 里即可（上一版默认 everforest 的 hard 档 =
+  `vim.g.everforest_background = "hard"`）：spec 的 `init` 早于 LazyVim 加载配色（实测读回
+  `g:everforest_background=hard`、Normal bg `#272e33`），**不需要**挪进 `lua/config/options.lua`
+  （`vim.g.gruvbox_contrast_dark = "hard"` 同理）
+- 换主题的先后：LazyVim 默认 tokyonight(moon) → everforest(hard) → **vscode**（当前）
+- 备选主题（同一个文件里、已装、随时可切）：everforest（spec 里已设 hard）、gruvbox（contrast hard）、
+  kanagawa（三个名字：`kanagawa`/`-wave`、`kanagawa-dragon`、`kanagawa-lotus`）、melange、onedark
+  （`vscode.nvim` 只提供名字 `vscode`，颜色文件就一个 `colors/vscode.lua`）
+- 预览 / 临时切换：`<leader>uC` → `Snacks.picker.colorschemes()`（LazyVim 的 snacks picker extra，
+  `extras/editor/snacks_picker.lua:111`；`install_version ≥ 8` 时 picker 默认就是 snacks，
+  见 `lazyvim/config/init.lua` 的 `get_defaults`）—— 松手即恢复，不写配置
+- **新建配色主题插件不要设 `lazy = true`**：lazy 时插件目录不进 runtimepath，
+  `:colorscheme <name>` 和上面那个 picker 都看不到它（LazyVim 自带的 tokyonight/catppuccin
+  是 lazy 的，靠 `require("tokyonight").load()` 才被拉起来）
+- 装主题/插件走代理（本机 github 直连不通）：
+  `HTTPS_PROXY=http://127.0.0.1:7890 nvim --headless -c 'lua require("lazy").install({ wait = true })' -c 'lua pcall(function() require("persistence").stop() end)' -c 'qa!'`
+
 ## 编辑器行为备忘
 
 - `shift+K` 的 LSP hover 是 noice 浮窗（view hover，`enter = false` 不可聚焦）：
@@ -205,6 +236,12 @@ end, 9500)'
   `pcall(vim.api.nvim_del_augroup_by_name, "persistence")` 可避免）；
   同理，Hermes 的 `write_file` / `patch` 工具会用 headless nvim（cwd = `$HOME`）做 lint，
   它退出时会写 `~/.local/state/nvim/sessions/%home%zn.vim` —— 那个不是真项目 session
+- **看/比配色（对比度）用无头就够**（配色只依赖高亮表，不需要 UI）：`:colorscheme <name>` 之后 dump
+  `vim.api.nvim_get_hl(0, { name = "Comment", link = false })` 的 fg + `Normal` 的 bg，
+  再按 WCAG 相对亮度算 `(L1 + 0.05) / (L2 + 0.05)`；`--clean` + `--cmd 'set rtp+=<插件>'` 也能只看
+  单个主题（不加载用户配置）。**坑：同一进程里连续切多个配色会串味** —— 先 `:colorscheme tokyonight-day`
+  会把 `background` 设成 light，后面的 `catppuccin` 就跟着变 latte（实测差了一整档）→ 每轮开头
+  `vim.o.background = "dark"` 复位；跑完照例 `pcall(require("persistence").stop())` 再 `qa!`
 - 改配置**不用拷副本**：本仓有 git，直接改真配置 → `git diff` 看改动、`git checkout -- <file>` 回退。
   只有需要"同一文件改前/改后各跑一遍"的 A/B 对比才用 `NVIM_APPNAME` 隔离，且必须一起软链 cache：
   ```bash

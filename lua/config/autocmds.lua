@@ -36,3 +36,21 @@ vim.api.nvim_create_autocmd("UIEnter", {
     end, 200)
   end,
 })
+
+-- `nvim .` 启动时 snacks explorer 在 UIEnter 里无条件 p:focus()（snacks/explorer/init.lua:41-51，
+-- 绕过 picker 的 focus/enter 配置）→ 焦点被侧栏浮窗抢走。启动落定后把焦点还给它的 main 窗口
+-- （= 启动时那个文件窗口），侧栏保留：explorer 源自带 auto_close = false
+-- （picker/config/sources.lua:63），焦点离开不会触发 picker 的自动关闭。
+-- 必须 defer：本文件里的 UIEnter autocmd 注册得比 explorer 那个早，直接切焦点会被它随后抢回去。
+vim.api.nvim_create_autocmd("UIEnter", {
+  once = true,
+  callback = function()
+    vim.defer_fn(function()
+      for _, picker in ipairs(Snacks.picker.get({ source = "explorer" })) do
+        if picker.main and vim.api.nvim_win_is_valid(picker.main) then
+          vim.api.nvim_set_current_win(picker.main)
+        end
+      end
+    end, 200)
+  end,
+})

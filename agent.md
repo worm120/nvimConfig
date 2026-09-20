@@ -28,27 +28,32 @@
 ```
 init.lua
 lua/config/{options,keymaps,autocmds,lazy}.lua
-lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter}.lua
+lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter,bufferline}.lua
 lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用，见下
 ```
 
 - `lua/config/options.lua`：`wrap`、`linebreak`、`breakindent` = true（长行按词换行，保持缩进）；
   `relativenumber = false`（行号显示绝对行号，见"编辑器行为备忘"）
 - `lua/config/keymaps.lua`：Alt 系键位
-  - `<A-d>` 定义、`<A-r>` 引用、`<A-s>` 跳回（`<C-o>`）
+  - `<A-d>` 定义、`<A-s>` 跳回（`<C-o>`）
+  - `<A-r>` 引用 → `Snacks.picker.lsp_references()` 浮窗（Esc 关）；**别改回** `vim.lsp.buf.references`，那是底部 quickfix
   - `<A-]>` / `<A-[>` 下/上一个 buffer，`<A-a>` 上一次 buffer（`b#`）
   - `<A-j>` / `<A-k>` 不移动光标滚屏（`<C-E>` / `<C-Y>`）
+  - 插入模式连按 `jj` = `<Esc>`（只绑 `i` 模式，命令行不受影响）
 - `lua/config/lazy.lua`：import python extra、**rust extra**；
   禁用 rtp 插件 gzip / tarPlugin / tohtml / tutor / zipPlugin
-- `lua/config/autocmds.lua`：只有一条自定义 autocmd —— `UIEnter` 后清掉 `nvim .` 残留的占位 buffer
-  （[No Name] 与目录名那格，见"功能 6"）；session 恢复的 autocmd 仍在 plugins/persistence.lua 里
-- `lua/plugins/snacks.lua`：explorer 显示 gitignored + 隐藏文件，固定宽度 40
+- `lua/config/autocmds.lua`：两条自定义 autocmd —— `UIEnter` 后清掉 `nvim .` 残留的占位 buffer
+  （[No Name] 与目录名那格，见"功能 6"），以及 `UIEnter` 后把焦点从 explorer 侧栏还给文件窗口
+  （见"功能 10"）；session 恢复的 autocmd 仍在 plugins/persistence.lua 里
+- `lua/plugins/snacks.lua`：explorer 显示 gitignored + 隐藏文件，固定宽度 40；
+  picker 全局 `focus = "list"`（打开停在结果列表 = normal 态，按 `i` 才进输入框）—— 见"功能 9"
 - `lua/plugins/lsp.lua`：opts 用 `function(_, opts)` 形式（为了保留其它 server 的设置不被覆盖）
   - pyright → `~/venvs/conan-env/bin/python`
   - lua_ls → 喂 xmake 的 API 名单和定义库（见"功能 2"）
 - `lua/plugins/treesitter.lua`：把手工装过的语言补进 nvim-treesitter 的 `ensure_installed`
   （LazyVim 的 spec 带 `opts_extend = { "ensure_installed" }`，是追加不是覆盖）—— 见"功能 3"
 - `lua/plugins/colorscheme.lua`：默认配色 everforest（hard 对比度）+ 4 个备选主题 —— 见"功能 5"
+- `lua/plugins/bufferline.lua`：只关掉 tab 名字截断（`truncate_names = false`）—— 见"功能 8"
 
 ## 功能 1：打开项目自动恢复上次 session
 
@@ -257,6 +262,61 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
 - 只影响显示：`enabled=true` 时由插件维护一个浮窗，`<leader>ut` 可随时关掉；收尾照例
   `persistence.stop()` → `:qa!`（sessions sha1 前后一致）
 
+## 功能 8：bufferline 显示完整文件名（2026-09-20 改）
+
+- 症状：顶部 tab 行里长文件名被砍成 `canbus_receiver_p…`
+- 原因：bufferline 默认 `truncate_names = true` + `max_name_length = 18`（`tab_size = 18`）——
+  `bufferline.nvim/lua/bufferline/config.lua:651-653`；`get_max_length()`（`bufferline/ui.lua:358-372`）
+  在 `truncate_names` 为 true 时返回 18，`utils.truncate_name`（`utils/init.lua:262`）按宽度截断再加 `…`
+  （`constants.ELLIPSIS`，U+2026）。LazyVim 的 spec（`lazyvim/plugins/ui.lua:20-52`）没有覆盖这两项
+- 改法：`lua/plugins/bufferline.lua` 只写 `opts.options.truncate_names = false`；lazy.nvim 与 LazyVim 的
+  spec 深度合并 —— 实测 `close_command` 仍是 function、`offsets` 仍是 2 个、`diagnostics = nvim_lsp` 都在
+- 实测（tmux 真 TTY，120 列，两个 34 字符文件名）：改前 `canbus_receiver_p… / raw_can_to_uplink…`，
+  改后两格都是完整名；`require("bufferline.config").options.truncate_names == false`
+- 取舍：名字不再截断后，整行超出窗口宽度时 bufferline **不改名字**，而是整块隐藏靠边的 tab 并显示
+  `left_trunc_marker` / `right_trunc_marker`（默认 U+F0A8 / U+F0A9，config.lua:647-648）。
+  想折中：删掉这行、改成 `max_name_length = 40`（保留截断但放宽阈值）
+- 生效：bufferline 是 `event = "VeryLazy"`，改完要新开一个 nvim；只想临时看效果用运行时
+  `:lua require("bufferline.config").options.truncate_names=false` + `:redrawtabline`（不用改文件）
+- 别把 `enforce_regular_tabs` 设 true：那会让 `get_max_length` 走 `tab_size - icon - padding`，名字又被 18 卡住
+
+## 功能 9：picker 打开时停在结果列表（normal 态）（2026-09-20 改）
+
+- 需求：打开 snacks picker 不要直接进插入模式，先能 `j`/`k` 选，要打字再按 `i`
+- 机制：`picker:show()` 只聚焦一次（`picker/core/picker.lua:484-496`，条件是
+  `opts.focus ~= false and opts.enter ~= false`），焦点目标 = `opts.focus`（默认 `"input"`）；
+  **输入框一进窗口就强制插入** —— `picker/core/input.lua:54-63` 的 buffer-local `BufEnter` 无条件
+  `vim.cmd("startinsert!")`，没有配置开关 → 想让 picker 以 normal 态打开，只能把焦点交给**结果列表窗口**
+  （普通窗口，不触发那段 autocmd）
+- 改法：`lua/plugins/snacks.lua` 的 `opts.picker.focus = "list"`（全局生效；实测运行时改
+  `Snacks.config.picker.focus` 对不传 opts 的 picker 也生效）。只想给某一个 picker 用：
+  `Snacks.picker.lsp_references({ focus = "list" })`
+- 实测（tmux 真 TTY，**全新**启动的 nvim + 真按键）：`Alt+R` 引用 → `mode=n ft=snacks_picker_list`；
+  按 `i` → `mode=i ft=snacks_picker_input`；`Space e` explorer 侧栏同样 `mode=n` 落在 list 窗口
+- 副作用：打开后直接敲字母不再进搜索框（列表窗口里那些键另有含义：`q` = 关闭、`j`/`k` = 上下选、
+  `G`/`gg` = 首尾）；必须按 `i`（列表窗口 `i` = `focus_input`，`config/defaults.lua:322`）才进输入框
+- `enter = false` **不是**这个用途：那是不聚焦任何 picker 窗口（焦点留在原文件窗口，只能鼠标点进去）
+
+## 功能 10：`nvim .` 启动后焦点落在文件 buffer 上（2026-09-20 加）
+
+- 现象：`nvim .` 启动后焦点被 snacks explorer 侧栏浮窗抢走（实测从启动 775ms 起，当前窗口一直是
+  `relative="win"` + `ft=snacks_picker_list`）；以前靠手动按一次 Esc，但 Esc 会把侧栏也一起关掉
+- 根因：启动路径里 explorer **自己**注册了一个 UIEnter autocmd 并无条件 `p:focus()`
+  （`snacks/explorer/init.lua:41-51`，注释原文 "focus on UIEnter, since focusing before doesn't work"），
+  绕过 picker 的 `focus` / `enter` 配置 —— 所以 `focus = false` 之类配置在**启动时无效**（实测只在启动
+  之后手动开 explorer 时才生效），官方没有"保留侧栏但不抢焦点"的开关
+- 修法（`lua/config/autocmds.lua`）：UIEnter + `defer_fn(…, 200)` 后，对
+  `Snacks.picker.get({ source = "explorer" })` 逐个 `vim.api.nvim_set_current_win(picker.main)`
+  （`picker.main` = 启动时那个文件窗口）。**必须 defer**：本文件的 UIEnter autocmd 注册得比 explorer
+  那个早，同步切焦点会被它随后的 `p:focus()` 抢回去
+- 侧栏保留不需要额外配置：explorer 源自带 `auto_close = false`（`picker/config/sources.lua:50-65`，
+  还有 `focus = "list"`、`layout = { preset = "sidebar", preview = false }`），焦点离开不会触发 picker
+  的自动关闭。反过来说，**通用 picker 的 `auto_close` 默认是 true**（一离开就自己关），所以这套别照搬到别的 picker
+- 冷启动实测（tmux 真 TTY，`nvim .` + session）：1000/2000/3500/6000/15000/25000ms 全部是
+  `win=1000 relative="" ft=cpp explorer_open=true`；屏幕上左侧侧栏在、文件内容在右侧，
+  按 `j` 光标动在文件窗口（`cursor=305`，状态栏是 .cc 文件）
+- 想恢复旧行为（启动焦点在侧栏）：删掉这条 autocmd 即可
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件
@@ -271,6 +331,16 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
     只切换**当前窗口**，新开的分屏还是绝对行号、重启也恢复 → 想临时看相对行号可以，但别指望它全局生效
   - 别用 `<leader>ul`：`Snacks.toggle.line_number()` 是把 `number` 和 `relativenumber` **一起关掉**，
     行号会整个消失（`snacks/toggle.lua:186-203`）
+- 「查找引用的窗口怎么关」（2026-09-20）：`<A-r>` 已改用 `Snacks.picker.lsp_references()` → 浮窗，`Esc` /
+  `<C-c>` / `q` 关。**若按成 LazyVim 的 `gr`**（LSP buffer 里是 buffer-local 的 `vim.lsp.buf.references`），
+  它是 nvim 原生默认行为 `setqflist` + `:botright copen`（`$VIMRUNTIME/lua/vim/lsp/buf.lua:909-910`）
+  → 底部 quickfix 普通分屏，**Esc 关不掉**，用 `:q` / `<C-w>c` / `<leader>xq`（LazyVim `keymaps.lua:108-114`
+  的 cclose/copen 开关）；`<leader>sq` 是 picker 版 quickfix，`[q`/`]q` 上下条跳。本机 nvim 里 `<C-r>`
+  六种模式全无映射（就是 redo），"查找引用" 从来不是 Ctrl+R
+- 插入模式连按 `jj` 退出到 normal（`lua/config/keymaps.lua`，rhs 是 `<Esc>` 而不是 `<C-c>` —— 后者不触发
+  `InsertLeave`，`doc/insert.txt:45-48`）：单敲一个 `j` 要等 `timeoutlen` 才落字（LazyVim = 300ms，
+  `lazyvim/config/options.lua:108`）；picker 输入框也是 insert 态，所以在搜索框里敲 `jj` 会先退出插入（按 `i` 回去）。
+  blink.cmp 默认 insert 键位没有 `j`/`k`，不会截胡
 - 回答"某个键是什么"这类问题：去 `~/.local/share/nvim/lazy/LazyVim/lua/lazyvim/plugins/*.lua`
   和插件源码里读，不要凭记忆或上游网页
 - "文件没高亮 / clangd 不工作"的诊断顺序：先 `vim.bo.filetype`（空 → filetype 检测没跑，

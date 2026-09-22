@@ -28,7 +28,7 @@
 ```
 init.lua
 lua/config/{options,keymaps,autocmds,lazy}.lua
-lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter,bufferline}.lua
+lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter,bufferline,jump2d}.lua
 lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用，见下
 ```
 
@@ -54,6 +54,16 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   （LazyVim 的 spec 带 `opts_extend = { "ensure_installed" }`，是追加不是覆盖）—— 见"功能 3"
 - `lua/plugins/colorscheme.lua`：默认配色 everforest（hard 对比度）+ 4 个备选主题 —— 见"功能 5"
 - `lua/plugins/bufferline.lua`：只关掉 tab 名字截断（`truncate_names = false`）—— 见"功能 8"
+- `lua/plugins/path-statusline.lua`：状态栏路径格 = 相对项目根（启动目录）的完整路径，即
+  `{ LazyVim.lualine.pretty_path({ length = 0 }) }` 顶替 LazyVim 默认那格（默认 `pretty_path()` 会把
+  超过 3 段的路径折叠成 `…`）。实测（tmux 真 TTY）：`󱉭 os   os/src/mm/page_table.rs`
+  - 想改回**绝对**路径：把该行换成自写函数
+    `function() return vim.fn.fnamemodify(vim.fn.expand("%:p"), ":~") end`（代价：丢掉那格的
+    目录/文件名高亮与修改标记）
+  - 别用 `pretty_path({ relative = "root" })` 当"相对项目根"：`relative` 走的是 `LazyVim.root.get()`，
+    而这个仓里 `os/` 下的文件被 clangd 认成 root = `.../rCore-Tutorial-v3/os`、`user/` 下才是仓根
+    （`vim.g.root_spec = { "lsp", { ".git", "lua" }, "cwd" }`）→ 会得到 `src/mm/page_table.rs`（丢掉
+    `os/`），跨 crate 不一致。默认 `relative = "cwd"` 因为剥 cwd 在前，反而稳定
 
 ## 功能 1：打开项目自动恢复上次 session
 
@@ -317,10 +327,70 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   按 `j` 光标动在文件窗口（`cursor=305`，状态栏是 .cc 文件）
 - 想恢复旧行为（启动焦点在侧栏）：删掉这条 autocmd 即可
 
+## 功能 11：flash 的"整屏每行标签"跳转 `<leader>j`（2026-09-20 加 → 2026-09-22 已卸）
+
+- **2026-09-22 变更**：`<leader>j` 已重新绑给 mini.jump2d 的"整屏每个词首跳"（见"功能 12"），flash 那个键已解除，
+  `lua/plugins/flash.lua` 文件已删除（它里面只有这一个键、没改 flash 任何 opts；flash 本体仍由 LazyVim 核心加载，
+  `s` / `S` / `r` / `R` 不受影响）。实测（新开实例）：`maparg("<leader>j","n",false,true).desc = "Jump2d Word Start"`、
+  `maparg("<leader>jw","n")` 为空、`package.loaded["flash"] = true`（flash 已加载，但不再有 `<leader>j` 映射）。
+  想恢复"整屏每行标签"就把本节下面那段写回 `lua/plugins/flash.lua`。
+
+- 需求背景：flash 原生 `s` 是"先按 `s` 打开、再输入搜索字符"两段（第一个 `s` 只在屏幕底部出一个 `⚡`
+  prompt，没有任何标签），而且标签只落在**可见行里匹配到 pattern 的位置** —— 匹配范围用窗口
+  topline/botline 构造（`flash/cache.lua:70-71`），`search.multi_window = true` 也只覆盖各窗口可见段；
+  `search.mode = "exact"`（`config.lua:29`）是字面匹配且大小写敏感 → 想"按一下、屏幕上随便哪行都能跳"用 `s` 做不到
+- 别指望 `S`：`S` 是 treesitter 模式，只给"光标所在节点 + 逐级父节点"打标签
+  （`flash/plugins/treesitter.lua:36-43` 的 `while node do … node:parent()`，实测 canbus 那个 311 行有 **13** 个祖先），
+  并且 `jump = { pos = "range", autojump = true }`（`config.lua:218`）会**按下即选中该节点范围并进 visual 模式**
+  （实测 `mode=v`、光标被带到节点末尾）；它的标签样式是 inline（`config.lua:221`
+  `label = { before = true, after = true, style = "inline" }`，且 `highlight.matches = false`），
+  标签字符被画进正文行内（屏幕上是 `bvoid Canbus…` / `… const uint32_t size) a{`）——
+  **纯 extmark 覆盖绘制，buffer 没变**（实测 `modified=false`、`changedtick` 不变、`undotree().seq_cur=0`）
+- 历史改法（2026-09-20 用，2026-09-22 已卸）：新增 `lua/plugins/flash.lua`，给 flash 加一个键（**不动** `s` / `S`）：`<leader>j` →
+  `require("flash").jump({ search = { mode = "search", max_length = 0 }, label = { after = { 0, 0 } }, pattern = "^" })`，
+  `mode = { "n", "x", "o" }`，desc `Flash Line Jump`。这是 flash README "Jump to a line" 的官方 recipe
+- 实测（tmux 真 TTY + 真按键 + 探针）：n 模式 `<leader>j` → **每一可见行行首都有标签**
+  （`Q K H G S A b c z …`），按标签即跳到该行（按 `o` → 状态栏 `302:1`）；
+  `y` + `<leader>j` + 标签 → 寄存器拿到 302~305 行；`v` + `<leader>j` + 标签 → 选区从 `302:1` 扩到 `330:1`（`mode=v`）
+- 细节：标签字母顺序**不是** a,b,c，而是按离光标距离排（`label.distance = true`，`config.lua:93`）；
+  `<leader>j` 在加之前是空的（LazyVim + 已装插件都没有这个 lhs，`maparg("<leader>j")` 返回空）
+- 生效：flash 是 `event = "VeryLazy"`，改完要**新开** nvim 才吃到这个键
+
+## 功能 12：整屏"每个词都能跳"（mini.jump2d，`<leader>j`）（2026-09-20 装，2026-09-22 从 `<leader>jw` 挪到 `<leader>j`）
+
+- 起因：flash 的标签池只有 52 个（26 小写 + 26 大写，`flash/config.lua:11` + `state.lua:78-83`），
+  而"整屏每个词"远超它（实测同一窗口 44 行里有 **142** 个词首）→ flash 只能标最近的那一批
+- 装法：`lua/plugins/jump2d.lua` —— `nvim-mini/mini.jump2d`，`event = "VeryLazy"`，
+  `opts = { labels = "abcdefghijklmnopqrstuvwxyz", view = { n_steps_ahead = 1 } }`，
+  `keys` 里绑 `<leader>j` → `require("mini.jump2d").start(require("mini.jump2d").builtin_opts.word_start)`
+  （只绑 n 模式：该版本 `start()` 没有 visual / operator-pending 相关选项）
+  - lazy 装插件要走代理（本机 github 直连不通）：
+    `cd /tmp && HTTPS_PROXY=http://127.0.0.1:7890 HTTP_PROXY=… nvim --headless -c 'lua require("lazy").install({ wait = true })' -c 'lua pcall(function() require("persistence").stop() end)' -c 'qa!'`
+- 机制（关键，别按 flash 的"标签池"思路理解）：mini.jump2d 的标签是**迭代过滤**——
+  第一步永远用满 `labels` 并按"均分给所有 spot"的算法分配（同一个字符可以标多个连续 spot），
+  按下的字符不唯一时只做过滤、重算标签，直到唯一为止（`doc/mini-jump2d.txt` 的 Example：
+  `abc` 三个标签对 10 个 spot 时先标成 `aaaabbbccc`）。所以**每个 spot 都有标签**，代价是 2~3 键
+  （文档原话："Usually takes from 2 to 3 keystrokes"）
+  - `view.n_steps_ahead = 1` 把第二步要按的字符也提前用暗色渲染出来：实测屏幕上
+    `canbus_parser_` 显示成 `acnbus_parser_`（step1 的 `a`、step2 的 `c` 覆盖词的前两个字符），
+    `Reset` 显示成 `adset` → 序列就是 `a` `c`
+- 实测（tmux 真 TTY，canbus .cc，311 行，当时键位还是 `<leader>jw`）：`Space j w` → 整屏每个词首都带 2 字符序列；
+  按 `a` → 只剩序列以 a 开头的 spot 并各自显示下一字符；再按 `c` → 光标落到 `293:3`（`canbus_parser_` 词首），
+  标签全部清掉、正文还原，`modified=false`
+- 挪到 `<leader>j` 后重测（tmux 真 TTY，130 行 big.txt）：`Space j` → 每行 "line N" 的两个词首都带 2 字符序列
+  （屏幕上 `aane ab` = step1 `a` / step2 `a` 盖住 `line` 前两字符，`a` / `b` 盖住 `1`）；按 `a` → 只留序列以 `a`
+  开头的 spot 并各显示下一字符（`aine b`）；再按 `a` → 光标落到 `1:1`，标签清掉、正文还原
+- 键位沿革：2026-09-20 装时绑 `<leader>jw`（那时 `<leader>j` 归 flash，两者同会话共存、不冲突）；
+  2026-09-22 起 flash 的 `<leader>j` 已卸（见"功能 11"），这条改绑 `<leader>j`，`<leader>jw` 现在**无映射**（实测 nil）
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件
   nvim-treesitter-context，**不是** nvim 本体功能（见"功能 7"）；`<leader>ut` 可随时开关
+- flash 两个入口的区别（2026-09-20）：`s` = 输入式跳（先 `s` 打开、第二个键是搜索字符；标签只在"可见行 ∩ 匹配
+  pattern"处）；`S` = treesitter 模式（标签仅光标节点+祖先，且按下即选中节点范围进 visual）
+- 跳转键（2026-09-22 起）：`<leader>j` = 整屏每个词首标签（mini.jump2d，标签是"多步过滤式"，每个词都有标签，
+  2~3 键到手，见"功能 12"）；flash 的"整屏每行标签"recipe 已卸、`<leader>jw` 也不再映射（恢复法见"功能 11"）
 - `shift+K` 的 LSP hover 是 noice 浮窗（view hover，`enter = false` 不可聚焦）：
   滚动靠鼠标滚轮，键盘用 LazyVim 内置 `<C-f>` / `<C-b>`（→ `noice.lsp.scroll(±4)`）；
   光标一移动（`CursorMoved`）窗口就 autohide 关闭，所以 `j`/`k` 没用

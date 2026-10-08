@@ -21,6 +21,8 @@ end
 -- 1) 默认只渲染 message，而 clangd/clang-tidy 把「调用链」等补充信息放在 relatedInformation
 --    （浮窗 <leader>cd 会显示，virtual_lines 不会）→ 接在 message 后面；
 -- 2) virt_lines 不折行，超宽会被窗口右缘静默裁掉 → 按窗口实际可用宽度自己折行。
+-- 3) 检查名放方括号里：clang 的 -Wxxx 与 clang-tidy 的 misc-xxx 统一成 [xxx]；
+--    不括起来的话 clang 那条开头就是个 "-"，容易被读成运算符符号。
 local function diag_lines(d)
   local win = vim.fn.win_findbuf(d.bufnr)[1]
   local width = win and vim.api.nvim_win_get_width(win) or vim.o.columns
@@ -30,7 +32,7 @@ local function diag_lines(d)
   local avail = math.max(30, width - left - 20) -- 20 = 缩进前缀 / 行号 / 符号列的余量
   local self = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(d.bufnr), ":t")
   local lines = {}
-  for _, ml in ipairs(vim.split((d.code and (d.code .. ": ") or "") .. d.message, "\n")) do
+  for _, ml in ipairs(vim.split((d.code and ("[" .. d.code .. "] ") or "") .. d.message, "\n")) do
     vim.list_extend(lines, wrap(ml, avail))
   end
   for _, info in ipairs(vim.tbl_get(d, "user_data", "lsp", "relatedInformation") or {}) do

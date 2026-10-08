@@ -402,6 +402,8 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
     窗口用 `vim.fn.win_findbuf(d.bufnr)` 取（`format` 只收到 diagnostic，但带 `d.bufnr`）；**前缀列数必须用 `vim.fn.virtcol` 而不是 `d.col`** —— 行首有缩进/tab 时两者不同。
   - 实测（隔离副本 `NVIM_APPNAME=nvim-vlfinal` + 真 clangd，106 列 tmux，CGProcedure.cpp L76）：光标行下方 5 行、无一行被裁，尾部词 `'optimizePhi'` / `here:` / `cycles` 都在屏幕上；同一条件下**不折行**的版本尾部被切（`…starting from function 'optimize`）。L76 那条对应的 `relatedInformation` 共 3 条（"Example recursive call chain…" / "Frame #1: … calls … here:" / "… which was the starting point…"）。
   - 余量 20 = 树形前缀(6) + related 行缩进(4) + 行号/符号列 的保守值；偏保守会让个别短消息也折行（74 字符的消息在 106 列窗口折成两行）——要更满就调小它，但别去掉 `virtcol` 那项。
+- **检查名加方括号**（2026-10-08，用户把 clang 那条开头的 `-W…` 读成了运算符符号）：原本拼的是 `d.code .. ": " .. message`，而 clang 的诊断 `code` 是 `-Wdeprecated-declarations` 这类 flag 名 → 渲染首行成「`└──── -Wdeprecated-declarations: …`」，开头那个裸 `-` 极易被读成减号/运算符（用户当时问「为什么可以写成这种除号形式」）。改成 `"[" .. d.code .. "] " .. message` → `[-Wdeprecated-declarations] …`，与 clang-tidy 的 `[misc-no-recursion]` 形式统一。
+- 验证渲染**不必等 clangd**：headless nvim 里 `vim.diagnostic.set(ns, bufnr, {假诊断})`（`code = "-Wdeprecated-declarations"` + `user_data.lsp.relatedInformation`）就能把 `diag_lines` 整条链路跑通再 dump extmark 文本。比等真 clangd 稳：`current_line = true` 何时触发渲染取决于光标行 —— 实测无头下光标停在无诊断的行时，你要看的那条根本不渲染。
 - 实测（tmux 真 TTY，`--clean` + 探针 `/tmp/vl.lua`，5 行文件 + 一条 3 行 clippy 消息，150 列窗口）：
   - 现状：`E 3 let x: usize = s; ● clippy: … raw pointer  but is not marked \`unsafe\`  try adding this: impl Defa`（压平 + 截断）
   - `virtual_lines = { current_line = true }`：光标行下方完整 3 行（带 `└────` 树形前缀），但行尾那条单行摘要仍在（重复）

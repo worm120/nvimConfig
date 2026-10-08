@@ -383,6 +383,36 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
 - 键位沿革：2026-09-20 装时绑 `<leader>jw`（那时 `<leader>j` 归 flash，两者同会话共存、不冲突）；
   2026-09-22 起 flash 的 `<leader>j` 已卸（见"功能 11"），这条改绑 `<leader>j`，`<leader>jw` 现在**无映射**（实测 nil）
 
+## 功能 13：诊断直接看全（virtual_lines）（2026-10-08 加）
+
+- 起因：LazyVim 默认只开行内 `virtual_text`，多行消息（clippy / rust-analyzer 常见 3~6 行）被压成一行、还被窗口右缘裁掉 → 想看全得按 `<leader>cd` 浮窗
+- 机制（`$VIMRUNTIME/lua/vim/diagnostic.lua`）：`virtual_text` 把消息里的换行替换成两个空格再压成一行（:2282 `gsub('\n','  ')`，且一行只显示最后一条诊断）；`virtual_lines` handler 按 `diagnostic.message:gmatch('([^\n]+)')` **每个换行各渲染一行**（:2139）；它默认关（:398 `virtual_lines = false`），LazyVim 也没开（`LazyVim/lua/lazyvim/plugins/lsp/init.lua:16-24` 只配 virtual_text）
+- 改法写在 `lua/plugins/lsp.lua` 的 lspconfig `opts = function(_, opts)` 里，**不要写进 `lua/config/options.lua`**：`vim.diagnostic.config` 对每个顶层键是**整体替换**（`diagnostic.lua:1322-1325` 的 `t[k] = v`），而 LazyVim 在 nvim-lspconfig 加载时调 `vim.diagnostic.config(vim.deepcopy(opts.diagnostics))`（`LazyVim/lua/lazyvim/plugins/lsp/init.lua:224`）→ 会盖掉 options.lua 写的 virtual_text 字段
+  ```lua
+  opts.diagnostics = opts.diagnostics or {}
+  opts.diagnostics.virtual_lines = { current_line = true, format = diag_lines } -- diag_lines 见下
+  opts.diagnostics.virtual_text = vim.tbl_deep_extend(
+    "force", opts.diagnostics.virtual_text or {}, { current_line = false })
+  ```
+  `tbl_deep_extend` 是为了保住 LazyVim 原有的 `spacing/source/prefix`
+- **光开 virtual_lines 还不够**（2026-10-08 用户当场发现「recursive call chain，但 chain 显示不完整」）：
+  - 多行 `message` 只是一部分信息：clangd / clang-tidy 把「调用链」等补充内容放在 **`relatedInformation`**（`user_data.lsp.relatedInformation`），nvim 里只有浮窗 `<leader>cd` 会拼上它（`diagnostic.lua:2614` 起那段：`文件名:行:列: 说明`），`virtual_text` / `virtual_lines` **都只渲染 `message`**。
+  - `virt_lines` **不折行**：超宽的整行被窗口右缘静默裁掉（extmark 带 `virt_lines_overflow = "scroll"`，但没有折行选项）→ 长 note 必须自己折。
+  - 解法 = 文件级 helper `diag_lines(d)`（写在 `lua/plugins/lsp.lua` 顶部，配套 `wrap()` 也是文件级 local）：message 的各换行 + relatedInformation 各条 → 逐行折到 `avail = 窗口宽 - virtcol(诊断列) - 20`。
+    窗口用 `vim.fn.win_findbuf(d.bufnr)` 取（`format` 只收到 diagnostic，但带 `d.bufnr`）；**前缀列数必须用 `vim.fn.virtcol` 而不是 `d.col`** —— 行首有缩进/tab 时两者不同。
+  - 实测（隔离副本 `NVIM_APPNAME=nvim-vlfinal` + 真 clangd，106 列 tmux，CGProcedure.cpp L76）：光标行下方 5 行、无一行被裁，尾部词 `'optimizePhi'` / `here:` / `cycles` 都在屏幕上；同一条件下**不折行**的版本尾部被切（`…starting from function 'optimize`）。L76 那条对应的 `relatedInformation` 共 3 条（"Example recursive call chain…" / "Frame #1: … calls … here:" / "… which was the starting point…"）。
+  - 余量 20 = 树形前缀(6) + related 行缩进(4) + 行号/符号列 的保守值；偏保守会让个别短消息也折行（74 字符的消息在 106 列窗口折成两行）——要更满就调小它，但别去掉 `virtcol` 那项。
+- 实测（tmux 真 TTY，`--clean` + 探针 `/tmp/vl.lua`，5 行文件 + 一条 3 行 clippy 消息，150 列窗口）：
+  - 现状：`E 3 let x: usize = s; ● clippy: … raw pointer  but is not marked \`unsafe\`  try adding this: impl Defa`（压平 + 截断）
+  - `virtual_lines = { current_line = true }`：光标行下方完整 3 行（带 `└────` 树形前缀），但行尾那条单行摘要仍在（重复）
+  - 再加 `virtual_text.current_line = false`：光标行只留下方多行、**其它行仍保留单行摘要** ← 采纳的方案
+  - `virtual_lines = true` + `virtual_text = false`：整文件所有诊断全展开（最占屏，只当临时开关用）
+- 隔离副本实测（`NVIM_APPNAME=nvim-vlcopy`，`nvim --headless <file>` 触发 BufReadPre → nvim-lspconfig 加载）：
+  改后 `virtual_lines={current_line=true}`、`virtual_text={current_line=false, prefix="●", source="if_many", spacing=4}`；
+  用 HEAD 版 lsp.lua 的对照副本同法测得 `virtual_lines=false`、`virtual_text` 无 `current_line`
+- 临时切换（不改配置、仅本次会话）：`:lua vim.diagnostic.config({ virtual_lines = true, virtual_text = false })` 整文件全展开；切回「光标行 + 折行 + 调用链」最稳的办法是重开 nvim（`format` 是文件级 local，挂不回来）
+- 限制：opts 启动时生效 → 改动要新开 nvim（`diag_lines` 是插件 spec 里的文件级 local，跑着的实例没法方便地热挂；临时整文件展开仍可用 `:lua vim.diagnostic.config({ virtual_lines = true, virtual_text = false })`）；只影响显示，`<leader>cd` / `]d` / signs / 下划线都不变
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件

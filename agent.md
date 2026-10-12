@@ -30,7 +30,12 @@ init.lua
 lua/config/{options,keymaps,autocmds,lazy}.lua
 lua/plugins/{lsp,persistence,snacks,colorscheme,example,treesitter,bufferline,jump2d}.lua
 lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用，见下
+tools/probe_nvim_lsp.lua                                # 只读：打正在跑的 nvim 的 LSP 状态 + references/definition/workspace-symbol
+tools/restart_nvim_lsp.lua                              # 重启该 buffer 的 LSP 客户端（buffer 有未保存改动则拒绝）
+tools/probe_clangd.py                                   # 独立起一个 clangd：磁盘索引里到底有没有这些引用（对照）
+tools/clangd_index_warm.py                              # 冷启动 clangd，数工程索引 .idx 新增 → 索引"热了没"
 ```
+（tools/ 下四个是「无头验证配方」用的现场取证脚本，非 LazyVim 插件配置）
 
 - `lua/config/options.lua`：`wrap`、`linebreak`、`breakindent` = true（长行按词换行，保持缩进）；
   `relativenumber = false`（行号显示绝对行号，见"编辑器行为备忘"）
@@ -439,6 +444,27 @@ lua/xmake-ls/{gen.py,globals.lua,defs/xmake-defs.lua}   # lua_ls 认 xmake 用�
   → 底部 quickfix 普通分屏，**Esc 关不掉**，用 `:q` / `<C-w>c` / `<leader>xq`（LazyVim `keymaps.lua:108-114`
   的 cclose/copen 开关）；`<leader>sq` 是 picker 版 quickfix，`[q`/`]q` 上下条跳。本机 nvim 里 `<C-r>`
   六种模式全无映射（就是 redo），"查找引用" 从来不是 Ctrl+R
+- `<A-r>` **只有定义本身 / 看着像"没有引用"**（2026-10-12 查 BYD 的 byd_adas_vcpb 时踩到，两种成因，先看 `vim.lsp.status()`）：
+  - **起因 A：clangd 后台索引还没建到调用者**。那工程 `compile_commands.json` 有 61 个唯一源文件，每个 TU 的 preamble ~45MB
+    （protobuf / cyber 头），clangd 启动日志会打 `Enqueueing 61 commands for indexing`，要几分钟到十几分钟才把**调用者** TU 的索引写盘；
+    此前 references 从索引里查不到任何调用点（只在当前文件里找到定义/声明）。
+    判据：`<project>/.cache/clangd/index` 里对应文件的 `.idx` **写盘时间**晚于你按 `<A-r>` 的时间
+    （`ls -la --time-style=full-iso <project>/.cache/clangd/index`）；那一带的 `.idx` 是 `<文件名>.<hash>.idx`。
+    索引目录**是工程本地的**（该工程 327MB，因为祖先目录里有 `.cache/clangd/`），不是 `~/.cache/clangd/index`——查错地方会得出"从没索引过"的错误结论。
+    另：`~/.local/state/nvim/lsp.log` 里 clangd 的 `<-- textDocument/references(N)` / `--> reply:… 0 ms` 能看到你按过的每次和时间。
+    这种成因**等索引写完即可**，不用改任何配置（数 `.idx` 新增可用 `tools/clangd_index_warm.py`）。
+  - **起因 B（更坑）：长跑的 clangd 进程自己索引不完整**。磁盘索引是全的（新起一个 clangd 用同一份 `.cache/clangd/index`
+    查同一位置给 42 处），可从打开工程起跑了 2.5 小时的那个 clangd 对同一位置只回 **1** 条（定义本身）；
+    它的 `vim.lsp.status()` 一直卡在 `50%: indexing …`，而 `workspace/symbol` 又能查到 caller TU 里的符号
+    （即 shard 加载了、引用表没生效）。→ **重启该 buffer 的 clangd 立刻恢复**（实测同一位置：重启前 count=1，重启后 count=42）。
+  - 上面这个对比不用手搓：`tools/probe_nvim_lsp.lua` 一条命令就打印该位置 references 的条数（当前会话），
+    `tools/probe_clangd.py`（独立 clangd，`--file/--symbol` 或直接给文件+符号名）给出对照值。
+  - 修复动作：`:lua for _,c in ipairs(vim.lsp.get_clients({bufnr=0})) do c:stop() end; vim.cmd("silent! edit")`
+    （本机 nvim 0.12 **没有** `:LspRestart` / `:LspInfo`，实测 `exists(":LspRestart")` = 0）；
+    `silent! edit` 只在 **buffer 干净**（`vim.bo.modified` = false）时用，它负责重新触发 FileType 让 LSP 重新 attach。
+    等价脚本 = `tools/restart_nvim_lsp.lua`（带「buffer 未保存则拒绝，可用 `_G.force_restart_lsp = true` 强制」的保护）。
+  - 旁支：同机还跑着 VS Code 的 clangd（`ps aux | grep clangd` 里带 `--query-driver=…aarch64-linux-g++`、父进程是 Code 那个），
+    它跟 nvim 共用同一份工程索引目录、抢 CPU，会让索引更慢。
 - 插入模式连按 `jj` 退出到 normal（`lua/config/keymaps.lua`，rhs 是 `<Esc>` 而不是 `<C-c>` —— 后者不触发
   `InsertLeave`，`doc/insert.txt:45-48`）：单敲一个 `j` 要等 `timeoutlen` 才落字（LazyVim = 300ms，
   `lazyvim/config/options.lua:108`）；picker 输入框也是 insert 态，所以在搜索框里敲 `jj` 会先退出插入（按 `i` 回去）。
@@ -490,6 +516,20 @@ end, 9500)'
   （`ls /run/user/1000/nvim.<pid>.0`），只读查询用
   `nvim --server <sock> --remote-expr 'luaeval("vim.inspect(...)")'`：luaeval 里嵌套引号用
   `[[...]]`，多语句用 `pcall(dofile, [[/tmp/x.lua]])`（脚本把结果写文件再读，`io.write` 不进消息区）
+  - **直接问它的 LSP**（比看 UI 准、无副作用）：探针脚本里 `local c = vim.lsp.get_clients({bufnr=0})[1]`，然后
+    `c:request_sync("textDocument/references", params, 8000, bufnr)` 读 `res.result` 的条数；params 用
+    `vim.lsp.util.make_position_params(0, c.offset_encoding)` 再补 `params.context = { includeDeclaration = true }`。
+    先打 `vim.fn.line(".")` / `col(".")` / `expand("<cword>")` 确认光标真在符号上（不然白查）。
+    `luaeval` 只吃**表达式** → 探针文件尾部写成 `return table.concat(out, "\n")`，所以要用 `dofile` 包（见上条）。
+    脚本已落在 `tools/`：`probe_nvim_lsp.lua`（只读：状态 + references/definition/workspace-symbol）、
+    `restart_nvim_lsp.lua`（重启客户端）、`probe_clangd.py`（独立 clangd 对照）、`clangd_index_warm.py`（索引热了没）。
+    ```bash
+    S=$(ls /run/user/$(id -u)/nvim.*.0 | head -1)        # 多个就按 ps 里的 pid 挑
+    nvim --server $S --remote-expr "luaeval('dofile(\"$HOME/.config/nvim/tools/probe_nvim_lsp.lua\")')"
+    ```
+  - 实测样例（2026-10-12，查 `<A-r>` 空的问题）：同一位置，长跑 clangd 的 `request_sync` 回 count=1、
+    新起的 clangd 回 42 → 结论"磁盘索引没问题、是那个进程的索引状态不对"；要改会话状态（`c:stop()` 重启 LSP 等）
+    再动手，且 `silent! edit` 只对干净 buffer 用
 - 复现"真交互"问题要**真 TTY**：`nvim --headless` 没有 UI（UIEnter 不发、dashboard/explorer 不出现），
   结论会失真。**首选 tmux**（本机已装 3.4）：能真按键 + 直接读屏幕文字（`script` 只能存转义字节流）：
   ```bash

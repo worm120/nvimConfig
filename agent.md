@@ -1,9 +1,10 @@
 # nvim 配置现状（agent.md）
 
-给后续 AI agent / 自己看的现状快照。最后更新：2026-09-18，
-本批改动 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」
+给后续 AI agent / 自己看的现状快照。最后更新：2026-10-13，
+历史批次 = 「nvim-treesitter 语言掉队补齐」+「session 恢复后补 filetype」+「配色：装 5 个候选主题并把默认定为 vscode」
 +「去掉 `nvim .` 启动时残留的占位 buffer（[No Name] 与目录名那两格）」
-+「装 nvim-treesitter-context（函数头固定在窗口顶部 = VSCode 的 sticky scroll）」。
++「装 nvim-treesitter-context（函数头固定在窗口顶部 = VSCode 的 sticky scroll）」+「诊断 virtual_lines（功能 13）」；
+最新一批 = 「`<A-f>` 悬浮窗显示当前文件完整路径（功能 14）」。
 提交主题与 hash 一律现查（`git log -1 --format=%s` / `%h`），不要抄进文档。
 **不要把提交 hash 写进本文件**：amend 会改 hash，一写就自相矛盾（要 hash 用 `git log -1 --format=%h` 查）。
 
@@ -45,6 +46,7 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
   - `<A-]>` / `<A-[>` 下/上一个 buffer，`<A-a>` 上一次 buffer（`b#`）
   - `<A-j>` / `<A-k>` 不移动光标滚屏（`<C-E>` / `<C-Y>`）
   - 插入模式连按 `jj` = `<Esc>`（只绑 `i` 模式，命令行不受影响）
+  - `<A-f>` 悬浮窗显示当前文件完整路径（软链会多一行 `-> 真身`；不聚焦，光标一动即关）—— 见"功能 14"
 - `lua/config/lazy.lua`：import python extra、**rust extra**；
   禁用 rtp 插件 gzip / tarPlugin / tohtml / tutor / zipPlugin
 - `lua/config/autocmds.lua`：两条自定义 autocmd —— `UIEnter` 后清掉 `nvim .` 残留的占位 buffer
@@ -420,6 +422,25 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
 - 临时切换（不改配置、仅本次会话）：`:lua vim.diagnostic.config({ virtual_lines = true, virtual_text = false })` 整文件全展开；切回「光标行 + 折行 + 调用链」最稳的办法是重开 nvim（`format` 是文件级 local，挂不回来）
 - 限制：opts 启动时生效 → 改动要新开 nvim（`diag_lines` 是插件 spec 里的文件级 local，跑着的实例没法方便地热挂；临时整文件展开仍可用 `:lua vim.diagnostic.config({ virtual_lines = true, virtual_text = false })`）；只影响显示，`<leader>cd` / `]d` / signs / 下划线都不变
 
+## 功能 14：`<A-f>` 悬浮窗显示当前文件完整路径（2026-10-13 加）
+
+- 需求：不要复制到剪贴板，就在浮窗里看一眼当前文件的**实际路径**（含软链真身）
+- 实现：`lua/config/keymaps.lua` 末尾一个 `vim.keymap.set("n", "<A-f>", …)` → `vim.lsp.util.open_floating_preview({ path }, "", { border = "rounded", max_width = min(columns-4, 100), title = " current file ", title_pos = "center" })`
+  - 借 nvim 自带 hover 浮窗的实现（`$VIMRUNTIME/lua/vim/lsp/util.lua:1677`），零插件依赖
+  - `wrap` 默认 true 且 `max_width` 同时当折行点（`_make_floating_popup_size`，util.lua:1540-1605 的
+    `wrap_at = min(wrap_at or max_width, max_width)`）→ 长路径**折行**显示，不会被窗口右缘裁掉
+  - 软链 / `..` 的真身 = `vim.fn.resolve(path)`，只有与打开时路径不同才多一行 `-> …`
+    （实测 `/tmp/pftest/link.h` → `-> /tmp/pftest/real.h`）；无名 buffer（如 `nvim .` 的占位 buffer）显示 `(no name)`
+- 行为（tmux 真 TTY 实测，这才是它"看一眼就完事"的原因）：
+  - 浮窗**不聚焦**（`nvim_open_win(buf, false, …)`）→ ① 光标一动自动关（`opts.close_events` 默认
+    `{ "CursorMoved", "CursorMovedI", "InsertCharPre" }`，util.lua:1682）；② `q` 是浮窗 buffer-local 的
+    `bdelete`（util.lua:1724），**不聚焦时按 `q` 无效** —— 想按住不放看就 `<C-w>w` 跳到浮窗再 `q`；
+    ③ `Esc` 无效（焦点不在浮窗）
+  - 键位选 `<A-f>`：实测空闲（`maparg` 空）；**别用 `<A-p>`**，它已被 buffer-local 的 "Prev Reference" 占着
+- 生效：`keymaps.lua` 是 VeryLazy → 已在跑的实例拿不到这个键，要新开 nvim
+- 实测屏幕（150 列，打开 cfgmgr.h）：`╭──── current file ────╮` 里是绝对路径，长路径折成两行；
+  按 `j` 一动浮窗即消失，buffer 本身无任何改动
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件
@@ -549,6 +570,13 @@ end, 9500)'
     `nvim_del_augroup_by_name("persistence")` 会抛错 → 回调中断、`qall!` 不执行 → nvim 永不退出
     （实测就是卡到超时，看着像卡死）。清理全部 pcall 包住，并在退出前写一行 "quit" 日志当断言
   - 跑完 `sha1sum` 对比 sessions 目录，确认诊断没写坏真实 session
+  - **两道防护都要做**（2026-10-13 踩过）：`tmux new-session` 一律带 `-c /tmp`（万一还是落盘，也只写到
+    `%tmp.vim`），并且发 `:lua require("persistence").stop()` **之前先 `tmux send-keys Escape`** —— 上一步的
+    `C-w w` / `q` / 待处理按键会把那条 `:lua …` 吃掉，`stop()` 静默没执行，退出照样按 cwd 落盘。
+    实测漏掉这两条：把 `modules/drivers/src` 的 session 键写成了测试文件的状态（只剩一个文件），
+    只能靠在跑的实例 `:lua require("persistence").save()` 写回（或在旧实例正常退出时自动写回）
+  - persistence 的 `VimLeavePre` 回调**不检查 `active()`**（`persistence/init.lua:41-60`），
+    `stop()` 靠删 augroup 生效 —— augroup 还在就一定保存
 - 项目根这种大目录里 `nvim .`，explorer（配了 hidden + ignored 全开）扫描会占住主循环约 20s：
   启动后立刻看会像"没反应"，等 20~30s 再读屏幕/日志；这与 session 恢复无关
   （改动前后、有/无目录键的对照实验都能复现）

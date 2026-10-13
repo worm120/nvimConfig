@@ -19,3 +19,23 @@ vim.keymap.set("n", "<A-k>", "<C-Y>", { desc = "Scroll screen up" })
 
 -- Insert mode: 连按两次 j 退出到 normal（用 <Esc> 而非 <C-c>，前者会触发 InsertLeave）
 vim.keymap.set("i", "jj", "<Esc>", { desc = "Exit insert mode" })
+
+-- 悬浮窗显示当前文件完整路径（nvim 自带 hover 浮窗的实现，不依赖插件）
+-- 不聚焦浮窗：光标一动即关（close_events 默认含 CursorMoved）；要按住看就 <C-w>w 跳到浮窗再 q
+vim.keymap.set("n", "<A-f>", function()
+  local path = vim.api.nvim_buf_get_name(0)
+  if path == "" then
+    path = "(no name)"
+  end
+  local lines = { path }
+  local real = vim.fn.resolve(path) -- 软链/.. 的真身，只有不同时才多一行
+  if real ~= path then
+    lines[#lines + 1] = "-> " .. real
+  end
+  vim.lsp.util.open_floating_preview(lines, "", {
+    border = "rounded",
+    max_width = math.min(vim.o.columns - 4, 100), -- 长路径折行，超宽不裁
+    title = " current file ",
+    title_pos = "center",
+  })
+end, { desc = "Show full file path" })

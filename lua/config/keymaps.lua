@@ -39,3 +39,15 @@ vim.keymap.set("n", "<A-f>", function()
     title_pos = "center",
   })
 end, { desc = "Show full file path" })
+
+-- 复制当前 buffer 的文件名到系统剪贴板（+ 寄存器，X11 下走 xclip）
+-- 想复制完整路径把 %:t 改成 %:p；想复制相对 cwd 的路径改成 %:.
+vim.keymap.set("n", "<A-y>", function()
+  local name = vim.fn.expand("%:t")
+  if name == "" then
+    vim.notify("Buffer has no file name", vim.log.levels.WARN)
+    return
+  end
+  vim.fn.setreg("+", name)
+  vim.notify("Copied: " .. name)
+end, { desc = "Copy file name" })

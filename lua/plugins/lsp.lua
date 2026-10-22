@@ -74,6 +74,12 @@ return {
         },
       }
 
+      -- bash: bashls（sh/bash filetype），shellcheck 由 mason 装在 bin 里，bashls 会自动调用做 lint。
+      -- 注意 filetype 是 sh，别只写 bash。
+      opts.servers.bashls = {
+        filetypes = { "sh" },
+      }
+
       -- xmake.lua 用的是 xmake 的 DSL（target/add_files/namespace...），不是标准 Lua，
       -- 不喂给 lua_ls 就会刷一片 undefined-global / undefined-field。
       -- 名单与定义文件由 lua/xmake-ls/gen.py 从 `xmake show -l apis` 生成。

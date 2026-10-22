@@ -64,17 +64,30 @@ return {
                 break
               end
             end
+            -- 走真实的检测路径（:filetype detect 还会看 shebang），match 只作兜底
+            local function detect_filetype(b)
+              vim.api.nvim_buf_call(b, function()
+                vim.cmd("silent! filetype detect")
+              end)
+              if vim.bo[b].filetype == "" then
+                vim.bo[b].filetype = vim.filetype.match({ buf = b, filename = vim.api.nvim_buf_get_name(b) }) or ""
+              end
+            end
             for _, b in ipairs(bufs) do
               if is_real_file(b) and vim.bo[b].filetype == "" then
-                local ft = vim.filetype.match({ buf = b, filename = vim.api.nvim_buf_get_name(b) })
-                if ft then
-                  -- 设置 'filetype' 会触发 FileType autocmd → treesitter / ftplugin / LSP 都跟上
-                  vim.bo[b].filetype = ft
-                end
+                -- 设置 'filetype' 会触发 FileType autocmd → treesitter / ftplugin / LSP 都跟上
+                detect_filetype(b)
               end
             end
           end
-          fix_session_buffers()
+          -- 必须丢到下一拍。这一拍是 session 里 :edit 触发的 autocmd 上下文，
+          -- did_filetype() 还是 1，而 nvim 自带的 sh/bash/ksh 检测函数
+          -- （runtime/lua/vim/filetype/detect.lua 的 sh()）开头就是
+          --   if fn.did_filetype() ~= 0 then return end
+          -- → match/ :filetype detect 一律返回 nil，.sh buffer 的 filetype 就留空
+          -- （表现：没有语法高亮、LSP 也不挂）。.c/.py 是纯字符串映射，不受影响，
+          -- 所以这个坑只在 shell 脚本上露出来。schedule 之后 did_filetype()=0，检测正常。
+          vim.schedule(fix_session_buffers)
         end,
       })
     end,

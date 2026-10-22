@@ -95,16 +95,30 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
 - 退出时保存（`need = 1`：至少一个"有名字且非常规 buftype"的 buffer，否则不落盘）
 - 手动键不变（`<leader>` = 空格）：`<leader>qs` 恢复当前目录、`<leader>qS` 选择 session、
   `<leader>ql` 上次、`<leader>qd` 本次退出不保存
-- **恢复后补 filetype**（2026-09-18 加，修"`nvim .` 恢复出来的文件没高亮、clangd 也不启动"）：
+- **恢复后补 filetype**（2026-09-18 加，2026-10-22 修 sh 脚本漏网）：
   session 恢复出来的 buffer 是 bufload 来的，**不触发 BufRead** → filetype 检测没跑
   （`vim.bo.filetype` / `syntax` / `b:did_filetype_lua` 全空）→ treesitter 不挂、LSP 也不启动。
-  `require("persistence").load()` 之后跑 `fix_session_buffers()`：先对第一个"真实文件"buffer
-  触发一次 `BufReadPre`（lazy.nvim 靠这个事件懒加载 nvim-lspconfig，不先加载则后面 filetype
-  设好了也轮不到 LSP），再给所有"已加载 + filetype 空 + 名字非空且不是目录"的 buffer 用
-  `vim.filetype.match({ buf = …, filename = … })` 补 filetype（设置 'filetype' 会触发 FileType）
+  `require("persistence").load()` 之后 **`vim.schedule(fix_session_buffers)`**：先对第一个"真实文件"
+  buffer 触发一次 `BufReadPre`（lazy.nvim 靠这个事件懒加载 nvim-lspconfig，不先加载则后面 filetype
+  设好了也轮不到 LSP），再给所有"已加载 + filetype 空 + 名字非空且不是目录"的 buffer 跑
+  `nvim_buf_call` + `:silent! filetype detect`（`vim.filetype.match` 只作兜底）
   实测（tmux 真 TTY，`nvim .` in modules/drivers/src）：恢复后 `ft=cpp`、`clients={clangd}`、
   `hl_active=true`；补丁前是 `ft=""`、`clients=0`、`hl_active=false`
   只在走了"自动恢复"那条路径时执行（守卫的 return 在它之前），`nvim <file>` 不受影响
+- **为什么必须 `vim.schedule`（2026-10-22 的坑，只在 shell 脚本露馅）**：原来是在 VimEnter 里
+  同步调 `fix_session_buffers()`，那一刻 session 里 `:edit` 触发的 autocmd 上下文还没退，
+  `did_filetype()` 仍是 1；而 nvim 自带的 `sh`/`bash`/`ksh` 检测不是静态映射，是
+  `$VIMRUNTIME/lua/vim/filetype/detect.lua` 里的函数，`sh()` 开头就是
+  `if fn.did_filetype() ~= 0 then return end` → `vim.filetype.match` 和 `:filetype detect`
+  一律返回 nil，filetype 留空。表现：**恢复出来的 .sh 没有语法高亮、bashls 也不挂**，
+  而 .c/.cpp/.py 一切正常（纯字符串映射，没有这个保护）。
+  实测（恢复同一个 drivers session，逐拍打日志）：
+  `at PersistenceLoadPost: x.sh=nil x.c=c x.py=python did_filetype=1`
+  → `vim.schedule 之后: x.sh=sh did_filetype=0`；改后恢复出来 `ft=sh`、`hl_active=true`、
+  `clients={bashls}`
+  反证：用 HEAD 版配置（`git archive`，里面没有 bashls）恢复同一 session 一样是 `ft=[]`，
+  与 bash LSP 那次改动无关。老 session 里 .sh 只是 `badd` 出来的后台 buffer（从没显示过），
+  所以这个 bug 一直存在，只是没人看见
 - 为什么用 autocmd 而不是插件自带开关：persistence.nvim 这个 commit **没有** autoload 选项
   （README 明说"永不自动恢复，但你可以自己写 autocmd"）；LazyVim 只把它挂在 `BufReadPre`，
   无参数启动时那次 `require("persistence")` 靠 lazy.nvim 的 module loader
@@ -440,6 +454,33 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
 - 生效：`keymaps.lua` 是 VeryLazy → 已在跑的实例拿不到这个键，要新开 nvim
 - 实测屏幕（150 列，打开 cfgmgr.h）：`╭──── current file ────╮` 里是绝对路径，长路径折成两行；
   按 `j` 一动浮窗即消失，buffer 本身无任何改动
+
+## 功能 15：bash 支持 LSP（bashls + shellcheck）（2026-10-22 加）
+
+- 症状（改之前）：打开 `.sh` 只有 shfmt 能格式化，**没有诊断 / 补全 / 跳转** ——
+  `mason` 的 `ensure_installed` 里虽然写了 `shellcheck`，实际一直没装上
+  （`packages/` 里只有 `shfmt`），也没有 `bash-language-server`；`lsp.lua` 里自然更没有 bashls
+- 实现：
+  - `lua/plugins/example.lua`：mason `ensure_installed` 加 `bash-language-server`
+  - `lua/plugins/lsp.lua`：显式 `opts.servers.bashls = { filetypes = { "sh" } }`
+    （filetype 是 `sh`，**不是** `bash`；shellcheck 由 mason 装进 bin，bashls 自己调它出诊断）
+  - 格式化沿用 LazyVim 默认 `conform` 的 `sh = { "shfmt" }`，没动
+- **装法有坑：mason 直装会卡死 300s**。npm 默认 registry 是内网 `http://hub.byd.com:9081`
+  （家宽连不上，`curl` 静默超时），而 mason 的 npm 包就走这个 registry。绕过办法：
+  - bashls：`npm install bash-language-server@latest --registry=https://registry.npmmirror.com`
+    装进 `~/.local/share/nvim/mason/packages/bash-language-server/`，再手工建
+    `mason/bin/bash-language-server` 软链（指向 `../packages/.../node_modules/.bin/bash-language-server`）
+  - shellcheck：GitHub release 静态二进制 `shellcheck-v0.11.0.linux.x86_64.tar.xz` 放进
+    `mason/packages/shellcheck/shellcheck`，同样建软链
+    （`registry.npmmirror.com/-/binary/` 上没有 shellcheck，返回 `NOT_FOUND`；github.com 直连不稳，
+    下载要 `--retry-all-errors --retry 5`）
+  - 两者 `mason-registry.is_installed()` 都认（按目录判断），但**不在 mason 自动升级范围**
+    （没有安装记录），要更新得再手动来一次
+- 实测（headless + tmux 真 TTY）：打开 `board-login-through-server.sh` → `clients=1 name=bashls`，
+  诊断 `[shellcheck] unnamed_var is referenced but not assigned.` 与
+  `Double quote to prevent globbing and word splitting.`
+- 相关的坑见功能 1「为什么必须 `vim.schedule`」：session 恢复出来的 `.sh` filetype 是空的，
+  那时 bashls 也不会挂
 
 ## 编辑器行为备忘
 

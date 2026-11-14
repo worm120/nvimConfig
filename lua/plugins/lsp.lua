@@ -80,6 +80,22 @@ return {
         filetypes = { "sh" },
       }
 
+      -- C/C++: clangd。LazyVim 的默认 servers 表里没有 clangd（只给 "*" 建 capabilities），
+      -- 所以没在 opts.servers 里点名 = 压根不 enable（vim.lsp.is_enabled("clangd") == false），
+      -- cpp buffer 上一个 client 都没有：不高亮、不补全、不跳转，全是「静默不生效」。
+      -- clangd 由 nix 提供（clang-tools 21.x）→ mason = false；
+      -- --clang-tidy 让诊断带上检查名（插件里 diag_lines 已经把 relatedInformation 一起渲染了）。
+      opts.servers.clangd = {
+        mason = false,
+        cmd = {
+          "clangd",
+          "--background-index",
+          "--clang-tidy",
+          "--header-insertion=never",
+          "--completion-style=detailed",
+        },
+      }
+
       -- xmake.lua 用的是 xmake 的 DSL（target/add_files/namespace...），不是标准 Lua，
       -- 不喂给 lua_ls 就会刷一片 undefined-global / undefined-field。
       -- 名单与定义文件由 lua/xmake-ls/gen.py 从 `xmake show -l apis` 生成。

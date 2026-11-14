@@ -482,6 +482,34 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
 - 相关的坑见功能 1「为什么必须 `vim.schedule`」：session 恢复出来的 `.sh` filetype 是空的，
   那时 bashls 也不会挂
 
+## 功能 16：C/C++ 支持 LSP（clangd）（2026-11-14 加）
+
+- 症状（改之前）：`.cpp/.h` 里一堆「没反应」——光标停在变量上不亮同名位置、没有补全 / 跳转 / 诊断。
+  实测 `vim.lsp.get_clients({ bufnr = 0 })` 为空、`vim.lsp.is_enabled("clangd") == false`：
+  LazyVim 的默认 `opts.servers` 表只有 `["*"]`，server 只有在 `opts.servers` 里**点名**才会 enable
+  （LazyVim `plugins/lsp/init.lua:66` + `configure()` 循环），clangd 一直没被点名，所以从来没起过。
+  → 这类「静默失效」先查有没有 client，别先怀疑高亮机制或插件
+- 实现：`lua/plugins/lsp.lua` 加
+  `opts.servers.clangd = { mason = false, cmd = { "clangd", "--background-index", "--clang-tidy",
+  "--header-insertion=never", "--completion-style=detailed" } }`
+  —— clangd 由 nix 提供（clang-tools 21.1.8），所以 `mason = false`，与 nixd 同
+- 同名符号高亮**触发不用自己挂**：LazyVim 默认开的 `snacks.words`（`plugins/ui.lua:282`
+  `words = { enabled = true }`）在 `CursorMoved` / `CursorMovedI` / `ModeChanged` 后 debounce 200ms
+  调 `vim.lsp.buf.document_highlight()`，写进 `vim_lsp_references` namespace；`]]` / `[[` 跳引用读的也是它。
+  曾经额外挂过一条 `CursorHold` 版本，实测完全重复（同一次移动发两次请求），已删。
+  配色同样不用管：当前主题 vscode.nvim 自己定义了 `LspReferenceText/Read/Write`
+  （`lua/vscode/theme.lua:573-575`，bg `#343b41`）
+- 项目侧（`disk3/code/computer_graphic_in_opengl`）还得两件事，否则 clangd 解析不动，
+  `documentHighlight` 会**在「使用处」返回空数组、在声明处却正常**（这个不对称很容易误判成高亮 bug）：
+  - 重新生成 `compile_commands.json`：
+    `nix-shell shell.nix --run 'xmake f -y --cxx=g++ && xmake project -k compile_commands'`
+    （旧文件里还是 `/home/zn/code/...` 老路径，所有 `-I` 都 MISS → 23 条诊断，`'GL/glew.h' file not found`）
+  - 项目根加 `.clangd` 补 glfw 的 include（xmake 没把 glfw 写进 db，glew/glm 有）：
+    路径用 `nix-shell shell.nix --run 'pkg-config --cflags glfw3'` 取，填进
+    `CompileFlags: Add: [-isystem, <path>]`。nixpkgs 升级后 store 哈希会变，需重取
+- 实测（headless + 真实启动）：`Utils.cpp` → `clients=1 clangd`，诊断 23 → 1（只剩 `cmath` 未使用）；
+  光标放 `shaderRef` 出 8 处高亮（L87 声明 + 7 处引用），`CursorMoved` 后清零
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件

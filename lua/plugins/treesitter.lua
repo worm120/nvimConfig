@@ -24,6 +24,7 @@ return {
         "git_config",
         "gitignore",
         "git_rebase",
+        "glsl",
         "graphql",
         "haskell",
         "http",

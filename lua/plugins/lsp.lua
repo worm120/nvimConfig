@@ -96,6 +96,29 @@ return {
         },
       }
 
+      -- GLSL: glsl_analyzer（.glsl / .vert / .frag / .comp / .geom / .tesc / .tese）。
+      -- 同 clangd：LazyVim 的 servers 表里没有它，不点名就永远不 enable。
+      -- 二进制由 nix 提供（pkgs.glsl_analyzer）→ mason = false。
+      opts.servers.glsl_analyzer = {
+        mason = false,
+      }
+
+      -- GLSL 语义高亮：glsld（二进制由 /etc/nixos/pkgs/glsld.nix 提供 → mason = false）。
+      -- 起因：glsl_analyzer 1.7.1 的能力表只有 completion / definition / hover / formatting，
+      -- 没有 semanticTokensProvider，而 nvim-treesitter 的 glsl 查询只抓 keyword.function /
+      -- keyword.modifier / variable.builtin → 普通变量在 GLSL 里一直是素色，只有词法级同名高亮兜底。
+      -- glsld 发真语义 token（legend: type/struct/parameter/variable/function/keyword/comment/
+      -- number/macro/string）外加 references，但它**没有诊断和格式化**，所以两个 client 并存：
+      -- 补全/hover/跳转/诊断/格式化仍归 glsl_analyzer，glsld 只管上色 + 同名符号
+      -- （重叠能力在 lua/config/autocmds.lua 的 LspAttach 里关掉）。
+      -- lspconfig 里没有 glsld，cmd/filetypes 必须自己写。
+      opts.servers.glsld = {
+        mason = false,
+        cmd = { "glsld", "--stdio" },
+        filetypes = { "glsl", "vert", "tesc", "tese", "frag", "geom", "comp" },
+        root_markers = { ".git" },
+      }
+
       -- xmake.lua 用的是 xmake 的 DSL（target/add_files/namespace...），不是标准 Lua，
       -- 不喂给 lua_ls 就会刷一片 undefined-global / undefined-field。
       -- 名单与定义文件由 lua/xmake-ls/gen.py 从 `xmake show -l apis` 生成。

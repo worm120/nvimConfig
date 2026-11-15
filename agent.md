@@ -510,6 +510,75 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
 - 实测（headless + 真实启动）：`Utils.cpp` → `clients=1 clangd`，诊断 23 → 1（只剩 `cmath` 未使用）；
   光标放 `shaderRef` 出 8 处高亮（L87 声明 + 7 处引用），`CursorMoved` 后清零
 
+## 功能 17：GLSL 支持（glsl_analyzer + treesitter parser）（2026-11-14 加）
+
+- 改之前：`.glsl / .frag / .vert` 的 `ft` 是 `glsl`（filetype 检测正常），但**只有一个 nvim 自带的
+  `syntax/glsl.vim` 正则高亮**：`vim.lsp.get_clients({bufnr=0})` 为空，`site/parser` 里也没有
+  `glsl.so`（`pcall(vim.treesitter.start)` 返回 false）
+- 实现：
+  - `/etc/nixos/home.nix`：`home.packages` 加 `pkgs.glsl_analyzer`（1.7.1）—— 与 nixd / tree-sitter
+    同一条约定：能走 nix 的工具不放 mason，nvim 侧 `mason = false`
+  - `lua/plugins/lsp.lua`：`opts.servers.glsl_analyzer = { mason = false }`
+    （和 clangd 一样，LazyVim 的 servers 表里没有它，不点名就永远不 enable）
+  - `lua/plugins/treesitter.lua`：`ensure_installed` 加 `"glsl"`；parser 用 `:TSInstall glsl` 装进
+    `~/.local/share/nvim/site/parser/glsl.so`（要代理：`https_proxy=http://127.0.0.1:7890`）
+- **能力边界 + 兜底**（语义上色在功能 18 补上，这里只是当时的词法兜底）：glsl_analyzer 1.7.1 的 `server_capabilities` 只有
+  `completion / definition / documentFormatting / hover / textDocumentSync` —— **没有 documentHighlight**
+  （`snacks.words` 也依赖这个能力，所以 GLSL 里它同样不工作）。为此在
+  `lua/config/autocmds.lua` 末尾加了词法级兜底（augroup `user_ts_reference_hl`）：
+  - 触发：`CursorMoved` / `CursorMovedI` / `BufEnter` / `InsertLeave`，100ms debounce；移动时先立刻清旧标记
+  - 只在 **buffer 上没有任何支持 documentHighlight 的 client** 时才动手（`get_clients({ method = ... })`）
+    → cpp/lua/nix 仍由 clangd/lua_ls/nixd + snacks.words 走语义版，不会双重高亮
+  - 取光标下的 treesitter 节点，**必须是 `identifier`**，再用 `(identifier) @id` 扫一遍同名节点画 extmark
+    （hl_group 用主题自带的 `LspReferenceText`）。所以注释 / 字符串里的同名文本不会误亮，
+    但这是**词法**匹配不是作用域语义：两个函数里各自的 `i` 会一起亮
+  - 超过 20000 行的 buffer 直接跳过（纯性能保险）
+- 实测：`fragShader.glsl` → `clients=1 glsl_analyzer`，`varyingColor` 上 hover 返回 ```in vec4```、
+  definition 跳到 L3（声明处），诊断 0 条；treesitter `ts_start=true`，
+  `#version` → `keyword.directive`、`in` / `uniform` → `keyword.modifier`；
+  光标停在 `varyingColor` 出 2 处 `LspReferenceText`（L3 声明 + L10 引用），
+  含注释里同名的 `cmt.glsl` 仍是 2 处（注释没被点亮），移到 `}` 上清零；
+  `Utils.cpp` 对照：`lsp_marks=8 / our_marks=0`（clangd 的语义版照旧）
+
+## 功能 18：GLSL 语义高亮（glsld）＋同名符号改走作用域语义（2026-11-15 加）
+
+- 症状：功能 17 之后 GLSL 里只有关键字 / 内建变量有颜色，普通变量永远是素的。根因两层：
+  ① glsl_analyzer 1.7.1 没有 `semanticTokensProvider`（没有语义上色）；
+  ② nvim-treesitter 的 `queries/glsl/highlights.scm` 全文只有三个 capture
+  （`@keyword.function` / `@keyword.modifier` / `@variable.builtin`），普通标识符语法层就没有 capture。
+- 选中的 server 是 **glsld**（daiyousei-qz/glsld v0.3.0）：legend 10 类
+  `type/struct/parameter/variable/function/keyword/comment/number/macro/string`，带
+  `readonly/declaration` 修饰符，另有 `references` / hover / 补全 / inlayHint。
+  **没有诊断、没有格式化** → 与 glsl_analyzer 并存，各管一半。
+- 排除的候选：shader-language-server（antaalt/shader-sense 1.6.2）语义 legend 只有
+  `macro/parameter/enum/enumMember`（普通变量根本不发 token）；glslx（ComingToy）没实现
+  semanticTokens 且不发 release；glsl-language-server（svenstaro，Lua）功能最少。
+- 实现：
+  - `/etc/nixos/pkgs/glsld.nix`：上游只发预编译二进制、nixpkgs 没有 → fetchurl + autoPatchelfHook
+    （它链 glibc / libstdc++）；`home.nix` 用 `(pkgs.callPackage ./pkgs/glsld.nix { })` 进 home.packages
+  - `lua/plugins/lsp.lua`：`opts.servers.glsld`（`mason = false`；lspconfig 里没有这个 server，
+    `cmd` + `filetypes` 自己写）
+  - `lua/config/autocmds.lua` 两处：
+    - `LspAttach` 里把 glsld 的 `hoverProvider/definitionProvider/completionProvider/documentSymbolProvider`
+      置 nil → 重叠能力仍归 glsl_analyzer，不出现双浮窗 / 双候选。改 server_capabilities 而不是写
+      on_attach：能力在 initialize 之后才定稿，改完对后续所有分发生效
+    - 同名符号高亮改成三档：① `documentHighlight`（clangd/lua_ls/nixd，由 snacks.words 画）→ 直接跳过；
+      ② `references`（glsld）→ 异步按范围画，**作用域语义**（两个函数各自的 `i` 不会互相点亮）；
+      ③ 都没有才用 treesitter 词法同名兜底。异步回包用代际号 `ref_gen` 丢弃过期结果；
+      `field_identifier`（`l.pos` 这类成员访问）也算标识符；1 个字符的变量在 ② 档正常高亮，
+      只有 ③ 档才跳过（词法匹配噪音太大）
+- 实测（无头 dump + tmux 抓屏双重取证）：
+  - `clients=2`：`glsl_analyzer hover=true completion=true semtok=false`、
+    `glsld hover=false completion=false semtok=true refs=true`
+  - 19 行测试 shader → 81 个语义 token extmark（`@lsp.type.variable.glsl` 19、
+    `@lsp.type.type.glsl` 15、`@lsp.type.function.glsl` 7、`@lsp.type.parameter.glsl` 5 …）
+  - `tmux capture-pane -e` 看真实上色：`light`/`pos`/`nrm`/`vColor` = rgb(156,220,254)
+    （`@variable` 的 #9CDCFE），`vec3`/`Light` = rgb(78,201,176)，`normalize`/`shade` = rgb(220,220,170)
+  - references 高亮：`n`（1 字符参数）2 处、`pos`（struct 字段）3 处、`light` 3 处、
+    非标识符位置 0 处；`alloc.cpp` 对照：clangd 挂上后本模块 0 处（仍由 snacks.words 走语义版）
+- 取舍：glsld 的 inlayHint 会在行内画 `x:` / `.xyz:` 之类类型提示。嫌吵就把 `"inlayHintProvider"`
+  加进 autocmds.lua 的 `glsld_overlap` 列表。
+
 ## 编辑器行为备忘
 
 - 滚动时窗口顶部钉住的函数/类签名（sticky scroll，VSCode 的效果）来自插件

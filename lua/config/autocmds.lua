@@ -205,21 +205,51 @@ vim.api.nvim_create_autocmd({ "BufLeave", "InsertEnter" }, {
   end,
 })
 
--- ── glsld 只留语义能力，重叠的交给 glsl_analyzer ──────────────────────────────
--- 两个 client 挂在同一个 GLSL buffer 上：glsl_analyzer 管补全 / hover / 跳转 / 格式化 / 诊断，
--- glsld 只管 semanticTokens（变量上色）+ references（同名符号高亮，见上面第 ② 档）。
--- 不关的话 hover 会叠两份浮窗、补全候选重复。
--- 这里改 server_capabilities 而不是给 glsld 写 on_attach：能力在初始化之后才定稿，
--- LspAttach 里改完对后续所有请求分发都生效，也省掉一份和 lspconfig 默认值合并的 on_attach。
-local glsld_overlap = { "hoverProvider", "definitionProvider", "completionProvider", "documentSymbolProvider" }
+-- ── GLSL 三个 client 各管一段，重叠能力在这里关掉 ─────────────────────────────
+-- 同一个 GLSL buffer 上会挂三个 server：
+--   glsl_analyzer          hover / 补全 / 跳转 / 格式化（体验最好，但完全没有诊断）
+--   shader-language-server 诊断（glslang 真编译校验）+ documentSymbol / 折叠 / 签名帮助
+--   glsld                  semanticTokens（变量上色）+ references（同名符号高亮）
+-- 不关重叠能力的话：hover 会叠两个浮窗、补全候选重复、两套 inlay hint、两套语义 token 打架。
+-- 改 server_capabilities 而不是给各 server 写 on_attach：能力在 initialize 之后才定稿，
+-- LspAttach 里改完对后续所有请求分发生效，也省掉一份和 lspconfig 默认值合并的 on_attach。
+local cap_strip = {
+  glsld = { "hoverProvider", "definitionProvider", "completionProvider", "documentSymbolProvider" },
+  -- 格式化关掉是因为 GLSL 格式化由 glsl_analyzer 做（sls 那个要外部 clang-format）；
+  -- 语义 token 关掉是因为只有 4 类（macro/parameter/enum/enumMember），会盖住 glsld 的；
+  -- inlay hint 关掉是为了不跟 glsld 的类型提示叠在一起；
+  -- diagnosticProvider 关掉是因为它同时 push + 支持 pull，nvim 两路都收 → 每条诊断出现两次
+  -- （实测 L17/L18 各重复一遍），关掉 pull 只留 push 通知。
+  shader_language_server = {
+    "hoverProvider",
+    "definitionProvider",
+    "completionProvider",
+    "documentFormattingProvider",
+    "documentRangeFormattingProvider",
+    "semanticTokensProvider",
+    "inlayHintProvider",
+    "diagnosticProvider",
+  },
+}
 vim.api.nvim_create_autocmd("LspAttach", {
   callback = function(event)
     local client = vim.lsp.get_client_by_id(event.data.client_id)
-    if not client or client.name ~= "glsld" then
+    if not client then
       return
     end
-    for _, cap in ipairs(glsld_overlap) do
+    for _, cap in ipairs(cap_strip[client.name] or {}) do
       client.server_capabilities[cap] = nil
     end
   end,
 })
+
+-- shader-language-server 在「发现 main 文件 / 变体」的过程中会发一条 uri 为空的
+-- publishDiagnostics，nvim 默认 handler 直接抛 `URI must contain a scheme: `。空 uri 本来
+-- 就没有意义（不可能指向任何 buffer），丢掉即可；其余照旧交给默认 handler。
+local default_publish_diagnostics = vim.lsp.handlers["textDocument/publishDiagnostics"]
+vim.lsp.handlers["textDocument/publishDiagnostics"] = function(err, result, ctx, config)
+  if type(result) == "table" and (result.uri == nil or result.uri == "") then
+    return
+  end
+  return default_publish_diagnostics(err, result, ctx, config)
+end

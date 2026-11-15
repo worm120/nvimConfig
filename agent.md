@@ -522,7 +522,7 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
     （和 clangd 一样，LazyVim 的 servers 表里没有它，不点名就永远不 enable）
   - `lua/plugins/treesitter.lua`：`ensure_installed` 加 `"glsl"`；parser 用 `:TSInstall glsl` 装进
     `~/.local/share/nvim/site/parser/glsl.so`（要代理：`https_proxy=http://127.0.0.1:7890`）
-- **能力边界 + 兜底**（语义上色在功能 18 补上，这里只是当时的词法兜底）：glsl_analyzer 1.7.1 的 `server_capabilities` 只有
+- **能力边界 + 兜底**（语义上色见功能 18、诊断见功能 19；这里只是当时的词法兜底）：glsl_analyzer 1.7.1 的 `server_capabilities` 只有
   `completion / definition / documentFormatting / hover / textDocumentSync` —— **没有 documentHighlight**
   （`snacks.words` 也依赖这个能力，所以 GLSL 里它同样不工作）。为此在
   `lua/config/autocmds.lua` 末尾加了词法级兜底（augroup `user_ts_reference_hl`）：
@@ -577,7 +577,43 @@ tools/clangd_index_warm.py                              # 冷启动 clangd，数
   - references 高亮：`n`（1 字符参数）2 处、`pos`（struct 字段）3 处、`light` 3 处、
     非标识符位置 0 处；`alloc.cpp` 对照：clangd 挂上后本模块 0 处（仍由 snacks.words 走语义版）
 - 取舍：glsld 的 inlayHint 会在行内画 `x:` / `.xyz:` 之类类型提示。嫌吵就把 `"inlayHintProvider"`
-  加进 autocmds.lua 的 `glsld_overlap` 列表。
+  加进 autocmds.lua 的 `cap_strip` 里 glsld 那一行。
+
+## 功能 19：GLSL 诊断（shader-language-server / glslang）（2026-11-15 加）
+
+- 起因：功能 17 里记的「诊断 0 条」后来查清是**它根本不发诊断** —— glsl_analyzer 的 LSP 方法表
+  只有 `didOpen/didChange/didSave/didClose` + `completion/hover/formatting/definition`
+  （`src/main.zig:422-429`），没有 `publishDiagnostics`；README 的 Features 里也没有诊断。
+  也就是说在加这个 server 之前，GLSL 是**零诊断**。
+- 选的 server：shader-language-server（antaalt/shader-sense v1.6.2，Rust）。GLSL 诊断走 **glslang**
+  （真编译器校验），解析/符号走 **tree-sitter**（`shader-sense/src/lib.rs` 第一行自述：
+  "validation … through standard API and tree-sitter for symbol inspection"）；另有
+  documentSymbol / 折叠 / 签名帮助 / workspaceSymbol。
+- 实现：
+  - `/etc/nixos/pkgs/shader-language-server.nix`：包 release 的 x86_64-linux zip（unzip +
+    autoPatchelfHook）。zip 里的 `libdxcompiler.so` / `libdxil.so` 只有 HLSL(DXC) 用得到，没装；
+    缺了它只往 stderr 打一行 `Failed to instantiate DXC … Fallback to glslang instead.`
+  - `lua/plugins/lsp.lua`：`opts.servers.shader_language_server`。settings **必须挂在
+    `"shader-validator"` 这一节**下：服务端 initialize 后发 `workspace/configuration`，
+    section 固定是 `shader-validator`，nvim 默认 handler 按节名从 `client.settings` 取值；
+    而服务端只在收到 `workspace/didChangeConfiguration` 时才去拉配置 —— nvim 在 settings 非空时
+    会自动发这个通知，所以两者缺一不可。
+  - `glsl = { targetClient = "None", spirvVersion = "None" }`：默认是 `Vulkan1_3`，
+    桌面 GLSL 会被报 `SPIR-V requires location…` / `non-opaque uniforms outside a block`。
+    `None` = 只做 GLSL 校验、不套 SPIR-V 目标（实测 `sem_test.glsl` 从 2 条假错 → 0 条）。
+  - `lua/config/autocmds.lua`：`cap_strip` 从「只处理 glsld」扩成按 server 名的表，sls 关掉
+    hover / definition / completion / formatting / rangeFormatting / semanticTokens / inlayHint
+    / **diagnosticProvider**。
+- 两个服务端脾气（都在实测里踩到）：
+  1. 它同时 push `publishDiagnostics` 又支持 pull（`diagnosticProvider`），nvim 两路都收 →
+     **每条诊断出现两次**。关掉 `diagnosticProvider` 只留 push 后：4 条 → 2 条。
+  2. 发现 main 文件 / 变体时会发一条 **uri 为空**的 `publishDiagnostics`，nvim 默认 handler 直接抛
+     `URI must contain a scheme: `。autocmds.lua 末尾用一层薄包装丢掉空 uri 的包，其余转给默认 handler。
+- 实测：valid `#version 450` → 3 clients、0 诊断、81 语义 token、refs 3 处；
+  故意写坏的版本（`undefinedThing` + vec4 赋给 float）→ 2 条（undeclared identifier、类型不匹配），
+  改回正确代码后诊断自动消失；qemu 的真实 GLSL ES shader（`texture-blit.frag/.vert`）→ 0 条。
+- 现在 GLSL 的分工：`glsl_analyzer` = hover/补全/跳转/格式化；`shader-language-server` = 诊断 +
+  documentSymbol；`glsld` = 语义 token + references（同名符号）。
 
 ## 编辑器行为备忘
 

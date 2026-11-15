@@ -119,6 +119,29 @@ return {
         root_markers = { ".git" },
       }
 
+      -- GLSL 诊断：shader-language-server（antaalt/shader-sense，二进制由
+      -- /etc/nixos/pkgs/shader-language-server.nix 提供 → mason = false）。
+      -- 为什么需要它：glsl_analyzer 的 LSP 方法表里根本没有 publishDiagnostics（诊断从来不是它的
+      -- 功能），glsld 也不做诊断 → 在加它之前 GLSL 是零诊断。它的诊断走 glslang（真编译器校验），
+      -- 解析/符号走 tree-sitter；补全/hover/跳转/格式化仍归 glsl_analyzer，上色归 glsld
+      -- （重叠能力在 lua/config/autocmds.lua 的 LspAttach 里关掉）。
+      -- settings 必须挂在 "shader-validator" 这一节下：服务端初始化后会发
+      -- workspace/configuration 请求 section = "shader-validator"，nvim 按节名从 client.settings 取值。
+      -- targetClient 默认 Vulkan1_3 → 桌面 GLSL 会被报 "SPIR-V requires location" 这类假错；
+      -- "None" = 只做 GLSL 校验、不套 SPIR-V 目标。
+      opts.servers.shader_language_server = {
+        mason = false,
+        cmd = { "shader-language-server" },
+        filetypes = { "glsl", "vert", "tesc", "tese", "frag", "geom", "comp" },
+        root_markers = { ".git" },
+        settings = {
+          ["shader-validator"] = {
+            validate = true,
+            glsl = { targetClient = "None", spirvVersion = "None" },
+          },
+        },
+      }
+
       -- xmake.lua 用的是 xmake 的 DSL（target/add_files/namespace...），不是标准 Lua，
       -- 不喂给 lua_ls 就会刷一片 undefined-global / undefined-field。
       -- 名单与定义文件由 lua/xmake-ls/gen.py 从 `xmake show -l apis` 生成。
